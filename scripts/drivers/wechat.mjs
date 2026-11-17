@@ -19,7 +19,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getToken, uploadThumb, addDraft, updateDraft, getDraft } from '../wechat-api.mjs';
+import { getToken, uploadThumb, addDraft, updateDraft, getDraft, listDrafts, deleteDraft } from '../wechat-api.mjs';
 import { envGet } from '../lib/env.mjs';
 import { parseArticle, stringifyArticle } from '../lib/frontmatter.mjs';
 
@@ -99,7 +99,7 @@ export default {
     const thumbMediaId = await uploadThumb(token, readFileSync(thumbPath), 'thumb.jpg', 'jpg');
     const draftPayload = {
       title: String(meta.title).slice(0, 64),
-      author: envGet('WECHAT_AUTHOR') || 'Paper to Post',
+      author: envGet('WECHAT_AUTHOR') || 'Paper',
       digest: String(meta.digest ?? '').slice(0, 120),
       content: body,
       thumbMediaId,
@@ -152,6 +152,23 @@ export default {
       }
     } catch (e) {
       log(`⚠️ 读回验证失败（${e.message.slice(0, 60)}），请到草稿箱人工确认`);
+    }
+
+    // 6. 清理同标题旧草稿。
+    // 每跑一次就多一份，草稿箱里堆五六份同名文章时人根本分不清哪份最新。
+    // batchget/delete 在部分账号上无权限（48001），失败只提示不中断——清理是
+    // 顺手做的事，不该让一次成功的发布变成失败。
+    try {
+      const title64 = String(meta.title).slice(0, 64);
+      let removed = 0;
+      for (const d of await listDrafts(token)) {
+        if (d.media_id === mediaId) continue;
+        if (d.content?.news_item?.[0]?.title !== title64) continue;
+        if (await deleteDraft(token, d.media_id).catch(() => false)) removed += 1;
+      }
+      if (removed) log(`已清理 ${removed} 份同标题旧草稿`);
+    } catch (e) {
+      log(`提示：旧草稿清理跳过（${e.message.slice(0, 40)}）——不影响本次草稿`);
     }
 
     return {

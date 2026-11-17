@@ -136,6 +136,35 @@ export async function getDraft(token, mediaId) {
   return data.news_item?.[0] ?? null;
 }
 
+/**
+ * 列出草稿箱（不含正文，只要元数据）。
+ *
+ * 注意权限：`draft/batchget` 在部分账号类型上直接返回 48001（无接口权限）。
+ * 这是账号能力差异，不是代码问题——调用方必须能接受失败，不能把它当成前置条件。
+ */
+export async function listDrafts(token, { offset = 0, count = 20 } = {}) {
+  const res = await fetch(`${API}/draft/batchget?access_token=${token}`, {
+    method: 'POST',
+    body: JSON.stringify({ offset, count, no_content: 1 }),
+    headers: { 'content-type': 'application/json' },
+  });
+  const data = await res.json();
+  if (data.errcode) throw new Error(`列草稿失败：${data.errcode} ${data.errmsg}`);
+  return data.item ?? [];
+}
+
+/** 删除一份草稿。同样受权限限制。 */
+export async function deleteDraft(token, mediaId) {
+  const res = await fetch(`${API}/draft/delete?access_token=${token}`, {
+    method: 'POST',
+    body: JSON.stringify({ media_id: mediaId }),
+    headers: { 'content-type': 'application/json' },
+  });
+  const data = await res.json();
+  if (data.errcode) throw new Error(`删草稿失败：${data.errcode} ${data.errmsg}`);
+  return true;
+}
+
 function bytesSlice(text, maxBytes) {
   let out = '';
   let used = 0;

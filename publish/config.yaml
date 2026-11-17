@@ -1,0 +1,46 @@
+# 账号级配置（非密钥）。本篇覆盖进 articles/<slug>/article.yaml。
+# 密钥只看 .env（LLM_API_KEY / WECHAT_APPID / WECHAT_APPSECRET）。
+
+# ── 账号定位 ──
+account_name: Paper to Post
+article_category: 大模型算法前沿解读
+target_reader: 算法工程师、AI Infra / 推理优化工程师、研究者；看得懂 Transformer 与训练细节，但没有时间读全文论文
+tone: 克制、判断明确、不吹
+default_author: PaperToPost
+update_frequency: 每周 2–3 篇
+
+# ── 结构（解读固定骨架）──
+required_sections:
+  - TL;DR
+  - 引言
+  - 问题
+  - 方法
+  - 实验设置
+  - 主要结果
+  - 深入分析
+  - 讨论与判断
+target_word_count: "3500-6000"
+max_chars_per_bold: 160       # 每多少个中文字至少要有一处加粗（A4）
+
+# ── 配图 ──
+image_density: 每节一图       # 长图按内容分页，正文不插图；封面 1 张
+cover_style: 深色科技 + 大数字
+
+# ── 审稿 ──
+review_required:
+  - 数字一致性
+  - 公式可渲染
+  - 敏感词
+  - 错别字
+  - Markdown 硬规则
+
+# ── 平台发布意图 ──
+# none = 不自动发；draft = 存草稿/停在编辑页；published = 直接发出
+platforms:
+  zhihu:
+    mode: draft
+    formula_style: native      # native = 知乎公式卡；fallback = 文字化
+  xiaohongshu:
+    mode: draft                # 6 张长图 + 短文案
+  wechat:
+    mode: draft                # 需要 WECHAT_APPID / WECHAT_APPSECRET 走 API，或 mpub/browser

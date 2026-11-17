@@ -1,4 +1,13 @@
-# 发布驱动
+# Publish drivers
 
-把 `drivers/<id>.mjs` 放在这里，`npm run publish:platform -- --to=<id>` 就能用。
-接口说明见 [../docs/drivers.md](../docs/drivers.md)。
+Put `drivers/<id>.mjs` here and `npm run publish:platform -- --to=<id>` will load it.
+No change to the pipeline is required.
+
+Interface reference: [../docs/drivers.md](../docs/drivers.md).
+
+Ready-made Zhihu and Xiaohongshu drivers (requiring the browser-skill `bsk` CLI) live in
+[../examples/drivers/](../examples/drivers/):
+
+```bash
+cp examples/drivers/*.mjs drivers/
+```

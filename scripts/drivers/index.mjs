@@ -57,10 +57,15 @@ export async function loadDriver(id) {
       return mod.default;
     }
     const known = ['manual', 'wechat'].join(' / ');
+    const exemplar = existsSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..',
+      'examples', 'drivers', `${id}.mjs`))
+      ? `\n  本项目带了一份现成的 ${id} 驱动（依赖 browser-skill 的 bsk CLI）：\n`
+        + `    cp examples/drivers/*.mjs drivers/   # 装好 bsk 之后\n`
+      : '';
     throw new Error(
       `还没有「${id}」的驱动。内置：${known}。\n`
       + `  自己实现一个：在项目根建 drivers/${id}.mjs，导出默认对象（见 docs/drivers.md），\n`
-      + `  然后 --to=${id} 就能用。`,
+      + `  然后 --to=${id} 就能用。${exemplar}`,
     );
   }
   const mod = await builtin[id]();

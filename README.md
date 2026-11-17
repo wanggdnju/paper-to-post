@@ -4,6 +4,8 @@ A pipeline that turns an arXiv paper into publication-ready drafts for multiple 
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+> 中文说明：[README.zh-CN.md](README.zh-CN.md)
+
 Reading a paper and writing it up is not the hard part. Getting the facts right is.
 Language models routinely turn "3.7% faster" into "37% faster", move a number from
 Table 1 into Table 2, and describe an untested setting as a poor result. This
@@ -107,12 +109,20 @@ npm run publish:platform -- --slug=mypaper                # manual
 npm run publish:platform -- --slug=mypaper --to=wechat    # WeChat draft
 ```
 
-Zhihu and Xiaohongshu are not included. Both are web-editor only, so automating them
+Zhihu and Xiaohongshu are not built in. Both are web-editor only, so automating them
 requires a specific browser tool; shipping one tool's integration would make the
-repository unusable for anyone without it. The rendered artifacts are ready
-(`dist/zhihu/<slug>.html`, `dist/xhs/<slug>-00..NN.png`), and an adapter can be added
-without modifying the pipeline by creating `drivers/<id>.mjs` in the project root.
-See [docs/drivers.md](docs/drivers.md) for the interface.
+repository unusable for anyone without it.
+
+[`examples/drivers/`](examples/drivers/) contains a working implementation of both,
+built on browser-skill's `bsk` CLI. Copy it in when you have the tool installed:
+
+```bash
+cp examples/drivers/*.mjs drivers/
+npm run publish:platform -- --slug=mypaper --to=zhihu
+```
+
+An adapter for any other tool can be added the same way — create `drivers/<id>.mjs`
+in the project root. See [docs/drivers.md](docs/drivers.md) for the interface.
 
 **No driver presses publish.** Drafts and prefilled editors only; the final action is
 left to the operator.
@@ -126,6 +136,7 @@ scripts/drivers/    Publishing drivers (manual, wechat)
 publish/            Account positioning, writing spec, manual checklist, word list
 docs/               Pipeline walkthrough, platform notes, driver interface
 .claude/skills/     Agent skill encapsulating the workflow
+examples/           Worked example article, plus optional browser drivers
 articles/<slug>/    One directory per paper (not tracked by git)
 ```
 

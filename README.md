@@ -1,15 +1,45 @@
-# paper-to-post
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <img src="assets/logo.svg" alt="paper-to-post" width="330">
+  </picture>
+</p>
 
-A pipeline that turns an arXiv paper into publication-ready drafts for multiple platforms — with every number in the output traced back to the paper.
+<p align="center"><b>Every number in the output traces back to the paper.</b></p>
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+<p align="center">
+  Turn an arXiv paper into publication-ready drafts for multiple platforms —<br>
+  and fail the build when the prose disagrees with the source.
+</p>
 
-> 中文说明：[README.zh-CN.md](README.zh-CN.md)
+<p align="center">
+  <a href="https://github.com/wanggdnju/paper-to-post/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/wanggdnju/paper-to-post/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <img alt="Node" src="https://img.shields.io/badge/node-%E2%89%A520.18-5FA04E">
+  <img alt="Platforms" src="https://img.shields.io/badge/output-zhihu%20%7C%20wechat%20%7C%20xiaohongshu-2f6bff">
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="docs/pipeline-overview.md">Pipeline</a> ·
+  <a href="docs/drivers.md">Drivers</a> ·
+  <a href="examples/">Examples</a> ·
+  <a href="examples/drivers/">Automation</a> ·
+  <a href="docs/zhihu-workflow.md">Platform notes</a> ·
+  <a href="#contributing">Contributing</a>
+</p>
+
+<p align="center">
+  English | <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+---
 
 Reading a paper and writing it up is not the hard part. Getting the facts right is.
 Language models routinely turn "3.7% faster" into "37% faster", move a number from
-Table 1 into Table 2, and describe an untested setting as a poor result. This
-repository is organized around preventing that: facts are extracted and frozen
+Table 1 into Table 2, and describe an untested setting as a poor result.
+
+This repository is organized around preventing that. Facts are extracted and frozen
 before any prose is generated, and every claim is checked against them afterwards.
 
 ## How it works

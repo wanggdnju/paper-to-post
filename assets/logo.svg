@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 330 64" width="330" height="64" role="img" aria-label="paper-to-post">
+  <!-- [ ] 括号：输入被包住 -->
+  <g fill="none" stroke="#0d1424" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M26 8H12v48h14"/>
+    <path d="M82 8h14v48H82"/>
+  </g>
+  <!-- 里面的三条"文本" -->
+  <g stroke="#6b7280" stroke-width="3.4" stroke-linecap="round">
+    <path d="M26 25h30"/><path d="M26 34h22"/><path d="M26 43h16"/>
+  </g>
+  <!-- 出去的箭头 -->
+  <g fill="none" stroke="#2563eb" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M106 32h26"/><path d="M124 24l9 8-9 8"/>
+  </g>
+  <text x="152" y="43" font-family="-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif"
+        font-size="29" font-weight="700" letter-spacing="-0.9" fill="#0d1424">paper<tspan fill="#2563eb">to</tspan>post</text>
+</svg>

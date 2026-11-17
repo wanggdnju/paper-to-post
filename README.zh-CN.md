@@ -1,13 +1,37 @@
-# paper-to-post
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <img src="assets/logo.svg" alt="paper-to-post" width="330">
+  </picture>
+</p>
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+<p align="center"><b>产出里的每一个数字，都能追溯到论文原文。</b></p>
 
-把一篇 arXiv 论文变成可直接发布的解读稿：**取料 → 调研 → 结构化 → 写稿 → 质检 → 排版 → 交给平台**。
+<p align="center">
+  把一篇 arXiv 论文变成可直接发布的解读稿——<br>
+  正文和原文对不上时，构建直接失败。
+</p>
 
-所有产出里的数字都能追溯到论文原文。这不是"AI 一键写稿"，核心约束是：
-**模型只能在已经冻结的事实里说话**。
+<p align="center">
+  <a href="https://github.com/wanggdnju/paper-to-post/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/wanggdnju/paper-to-post/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <img alt="Node" src="https://img.shields.io/badge/node-%E2%89%A520.18-5FA04E">
+  <img alt="Platforms" src="https://img.shields.io/badge/output-zhihu%20%7C%20wechat%20%7C%20xiaohongshu-2f6bff">
+</p>
 
-> English: [README.md](README.md)
+<p align="center">
+  <a href="#快速开始">快速开始</a> ·
+  <a href="docs/pipeline-overview.md">流程</a> ·
+  <a href="docs/drivers.md">驱动</a> ·
+  <a href="examples/">示例</a> ·
+  <a href="examples/drivers/">自动化</a> ·
+  <a href="docs/zhihu-workflow.md">平台笔记</a> ·
+  <a href="#贡献">贡献</a>
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> | 简体中文
+</p>
 
 ---
 

@@ -1,8 +1,6 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
-    <img src="assets/logo.svg" alt="paper-to-post" width="330">
-  </picture>
+  <img src="assets/logo.svg#gh-light-mode-only" alt="paper-to-post" width="330">
+  <img src="assets/logo-dark.svg#gh-dark-mode-only" alt="paper-to-post" width="330">
 </p>
 
 <p align="center"><b>产出里的每一个数字，都能追溯到论文原文。</b></p>

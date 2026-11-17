@@ -6,5 +6,8 @@ dist/
 .DS_Store
 *.log
 
-# Per-paper artifacts and outputs; content does not belong in the code repo
-articles/
+# Per-paper artifacts and outputs; content does not belong in the code repo.
+# The directory itself is kept so `cp -r examples/minimal articles/` works on a
+# fresh clone without a mkdir first.
+articles/*
+!articles/.gitkeep

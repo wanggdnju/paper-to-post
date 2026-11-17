@@ -1,103 +1,112 @@
-# 写一个发布驱动
+# Writing a publish driver
 
-主流程把「渲染好的产物」交给驱动，驱动负责「放进平台」。平台差异全部隔离在这一层。
+The pipeline renders artifacts and hands them to a driver. A driver moves them
+into a platform. All platform-specific behaviour lives behind this interface.
 
-## 为什么要这一层
+## Rationale
 
-三个平台根本不是一类东西：
+The three target platforms are not comparable:
 
-| 平台 | 有什么 | 能自动化到什么程度 |
+| Platform | Interface available | Automation ceiling |
 | --- | --- | --- |
-| 公众号 | 官方 HTTP API | 建草稿、更新、读回、删旧稿，全自动 |
-| 知乎 | 只有网页编辑器 | 需要浏览器自动化 |
-| 小红书 | 只有网页编辑器（ProseMirror） | 需要浏览器自动化，且对注入很敏感 |
+| WeChat MP | Official HTTP API | Create, update, read back and delete drafts — fully automatable |
+| Zhihu | Web editor only | Requires browser automation |
+| Xiaohongshu | Web editor only (ProseMirror) | Requires browser automation and is sensitive to synthetic input |
 
-浏览器自动化必然绑定具体工具。把某一种工具写进主流程，等于要求每个使用者
-先装同一套东西——这个仓库就没法被别人用起来。所以知乎/小红书只留接口。
+Browser automation depends on a specific tool. Embedding one tool's integration in
+the pipeline would force every user to install it, so those two platforms ship as an
+interface rather than an implementation.
 
-## 接口
+## Interface
 
-在**项目根**建 `drivers/<id>.mjs`，导出默认对象：
+Create `drivers/<id>.mjs` in the project root and export a default object:
 
 ```js
 export default {
   id: 'zhihu',
-  label: '知乎',
-  requires: [],            // 缺这些环境变量就在 preflight 阶段报错
-  needsRendered: 'zhihu',  // 需要 dist/zhihu/<slug>.html；null 表示不需要
+  label: 'Zhihu',
+  requires: [],            // env vars that must be present; checked before publish
+  needsRendered: 'zhihu',  // expects dist/zhihu/<slug>.html; null if not applicable
 
   async preflight(ctx) {
-    // 发布前的检查：凭证、产物、封面。任何失败都调 ctx.fail()，
-    // 这样错误发生在任何写操作之前。
+    // Validate credentials, artifacts and cover image. Call ctx.fail() on any
+    // problem so it surfaces before the first write operation.
   },
 
   async publish(ctx) {
-    // 真正发布。只做到草稿/输入框，不要点发送。
+    // Perform the publish. Stop at the draft / prefilled editor stage.
     return {
-      url: 'https://zhuanlan.zhihu.com/p/xxx',  // 可选
-      message: '已灌入编辑器，等你点发布',
+      url: 'https://zhuanlan.zhihu.com/p/xxx',  // optional
+      message: 'Loaded into the editor; awaiting manual submit',
       ok: true,
     };
   },
 };
 ```
 
-`--to=zhihu` 会自动加载它，不需要改 `scripts/drivers/index.mjs`。
+`--to=zhihu` loads it automatically. No change to `scripts/drivers/index.mjs` is
+required.
 
-## ctx 里有什么
+## The `ctx` object
 
-| 字段 | 说明 |
+| Field | Description |
 | --- | --- |
-| `root` | 项目根目录的绝对路径 |
-| `slug` | 文章 slug |
-| `articleDir` | `articles/<slug>/`，里面是 `article.yaml` / `article.md` / `assets/` |
-| `meta` | `article.yaml` 解析后的对象：`title` `digest` `arxiv_id` `platforms` … |
-| `args` | 命令行 `--key=value` 原样传进来，你可以定义自己的私有参数 |
-| `log(msg)` | 输出一行进度 |
-| `fail(msg)` | 抛出用户看得懂的错误，主流程会打到 stderr 并退出 |
+| `root` | Absolute path to the project root |
+| `slug` | Article slug |
+| `articleDir` | `articles/<slug>/`, containing `article.yaml`, `article.md`, `assets/` |
+| `meta` | Parsed `article.yaml`: `title`, `digest`, `arxiv_id`, `platforms`, … |
+| `args` | Parsed `--key=value` arguments, including driver-specific ones |
+| `log(msg)` | Print a progress line |
+| `fail(msg)` | Abort with a user-facing error; the CLI prints it and exits non-zero |
 
-## 产物在哪
+## Available artifacts
 
-渲染阶段已经准备好了这些东西，驱动只管用：
+The render stage produces these; a driver only consumes them:
 
-| 文件 | 内容 |
+| Path | Contents |
 | --- | --- |
-| `dist/zhihu/<slug>.html` | 知乎正文 HTML。公式已写成 `data-eeimg="2"` 的居中行间公式，图片是本地路径 |
-| `dist/wechat/<slug>.html` | 公众号正文。图片是 `@@IMG:` 占位，需要先上传换域名 |
-| `dist/html/<slug>.html` | 自包含长文（KaTeX 字体已内联），适合直接发给别人 |
-| `dist/xhs/<slug>-00..NN.png` | 小红书切图，780×1040，`-00-cover` 是封面 |
-| `articles/<slug>/xhs.md` | 小红书短文案与话题 |
+| `dist/zhihu/<slug>.html` | Zhihu body HTML. Formulas are emitted as centred display blocks (`data-eeimg="2"`); images are local paths |
+| `dist/wechat/<slug>.html` | WeChat body. Images are `@@IMG:` placeholders until uploaded and rewritten |
+| `dist/html/<slug>.html` | Self-contained long-form page (KaTeX fonts inlined) |
+| `dist/xhs/<slug>-00..NN.png` | Xiaohongshu slides, 780×1040; `-00-cover` is the cover |
+| `articles/<slug>/xhs.md` | Short-form copy and hashtags |
 
-## 拿公众号驱动当模板
+## Reference implementation
 
-`scripts/drivers/wechat.mjs` 是完整实现，值得照抄的部分：
+`scripts/drivers/wechat.mjs` is a complete example. The patterns worth copying:
 
-1. **preflight 里检查一切**：封面存在吗、标题有没有、作者名会不会被截断。
-   失败要发生在任何写操作之前，而不是上传了一半图片才发现。
-2. **幂等**：`article.yaml` 里存了 `wechat_draft_id`，有旧草稿就原地更新，
-   不要每次新建——草稿箱里堆五份同名文章，人根本分不清哪份是新的。
-3. **读回验证**：建完草稿后把服务器上那份拉回来，逐项比对。
-   平台会改写你提交的 HTML，本地干净不代表线上干净。
-4. **不点发布**：群发不可撤回，脚本只做到草稿。
+1. **Validate everything in `preflight`.** Missing cover, absent title, an author name
+   that will be truncated — all of it should fail before any network write.
+2. **Be idempotent.** The draft ID is stored in `article.yaml`; an existing draft is
+   updated in place rather than duplicated. Five identically titled drafts in a queue
+   are indistinguishable to the operator.
+3. **Verify by reading back.** Re-fetch the published draft and compare it field by
+   field. Platforms rewrite submitted HTML, so a clean local file proves nothing.
+4. **Never press publish.** Drafts only.
 
-## 关于浏览器自动化的经验
+## Notes for browser automation
 
-以下这些不是理论，是实际踩出来的。不管你用 Playwright、Puppeteer 还是别的，都适用：
+The following apply to any tool — Playwright, Puppeteer, or a CDP client:
 
-- **编辑器是内存态**：知乎 Draft.js / 小红书 ProseMirror 的 DOM 不等于内容。
-  关掉页面内容就没了，必须显式「存草稿」。
-- **`fill` 对富文本编辑器无效**：直接设 `value` 或 `innerText` 不触发框架的
-  `input` 事件，编辑器状态不会更新。要么用真实键盘事件逐字输入，要么走粘贴。
-- **一次写入就挂起**：某些编辑器检测到「一次性大段注入」会判定为非人工操作，
-  挂起编辑控制权，且不自愈。特征是写入后光标不再响应。
-- **标题必须在新建时写对**：事后改标题，旧快照可能回写覆盖。
-- **平台会剥掉外链**：公众号正文里 `<a>` 连标签一起消失（读回 `anchors=0`）；
-  这是平台限制，不是排版问题——改用二维码、「阅读原文」、编号小节这类允许的形态，
-  并告诉读者这是平台限制。
-- **验收必须在平台读回之后**：抓本地 HTML 通过不算数。
+- **Editors are in-memory state.** The Zhihu Draft.js and Xiaohongshu ProseMirror
+  editors do not reflect their content in the DOM. Closing the page discards unsaved
+  content; a draft must be saved explicitly.
+- **Setting `value` or `innerText` does not work** on rich-text editors: it does not
+  fire the framework's input events. Use real keyboard events or a paste gesture.
+- **Single large insertions can suspend control.** Some editors classify a bulk
+  programmatic write as non-human input and hand control back to the user without
+  recovering. The symptom is a caret that no longer responds.
+- **Set the title at creation time.** Editing it afterwards can be overwritten by a
+  stale snapshot.
+- **Platforms strip outbound links.** WeChat removes `<a>` entirely from article
+  bodies (readback reports `anchors=0`). This is a platform constraint, not a
+  formatting bug: use QR codes, a "read original" link, or numbered sections instead,
+  and state the limitation to readers.
+- **Verify after a reload.** Reading state from the current DOM is not verification.
 
-## 现有的私有实现
+## Prior implementation
 
-本项目作者有一份基于 browser-skill 的知乎/小红书实现（`bsk` CLI），能完整跑通，
-但没有放进这个仓库——它要求装同一个工具、用同一个浏览器配置。
-如果你也想走那条路，按上面的接口重写即可，产物和约定都已经对齐。
+The author maintains a working Zhihu/Xiaohongshu implementation built on a browser
+automation CLI, but it is not included here: it requires that specific tool and a
+matching browser profile. Anyone replicating it should implement the interface above;
+the rendered artifacts and contracts already line up.

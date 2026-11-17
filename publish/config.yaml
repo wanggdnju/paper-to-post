@@ -1,46 +1,51 @@
-# 账号级配置（非密钥）。本篇覆盖进 articles/<slug>/article.yaml。
-# 密钥只看 .env（LLM_API_KEY / WECHAT_APPID / WECHAT_APPSECRET）。
+# Account-level configuration (no secrets). Per-article values override this in
+# articles/<slug>/article.yaml.
+# Secrets live only in .env (LLM_API_KEY / WECHAT_APPID / WECHAT_APPSECRET).
 
-# ── 账号定位 ──
+# ── Positioning ──
 account_name: Paper to Post
-article_category: 大模型算法前沿解读
+article_category: LLM research explainers
+# Audience definition is fed to the model, so it is kept in the target language.
 target_reader: 算法工程师、AI Infra / 推理优化工程师、研究者；看得懂 Transformer 与训练细节，但没有时间读全文论文
 tone: 克制、判断明确、不吹
-default_author: PaperToPost
-update_frequency: 每周 2–3 篇
+# WeChat truncates the author field at 8 UTF-8 bytes; keep it short.
+default_author: Paper
+update_frequency: 2-3 articles per week
 
-# ── 结构（解读固定骨架）──
+# ── Structure ──
+# Section headings must match article.md exactly (checked by publish-check A2),
+# so they are kept in the language the articles are written in.
 required_sections:
   - TL;DR
-  - 引言
-  - 问题
-  - 方法
-  - 实验设置
-  - 主要结果
-  - 深入分析
-  - 讨论与判断
+  - 引言            # Introduction
+  - 问题            # Problem
+  - 方法            # Method
+  - 实验设置        # Experimental setup
+  - 主要结果        # Results
+  - 深入分析        # Analysis
+  - 讨论与判断      # Discussion and takeaways
 target_word_count: "3500-6000"
-max_chars_per_bold: 160       # 每多少个中文字至少要有一处加粗（A4）
+max_chars_per_bold: 160       # force a bold run at least every N characters
 
-# ── 配图 ──
-image_density: 每节一图       # 长图按内容分页，正文不插图；封面 1 张
+# ── Figures ──
+image_density: 每节一图       # one figure per section; long-form slides paginate, body stays text
 cover_style: 深色科技 + 大数字
 
-# ── 审稿 ──
+# ── Review ──
 review_required:
-  - 数字一致性
-  - 公式可渲染
-  - 敏感词
-  - 错别字
-  - Markdown 硬规则
+  - 数字一致性      # numeric consistency
+  - 公式可渲染      # formulas render
+  - 敏感词          # prohibited terms
+  - 错别字          # typos
+  - Markdown 硬规则 # markdown hard rules
 
-# ── 平台发布意图 ──
-# none = 不自动发；draft = 存草稿/停在编辑页；published = 直接发出
+# ── Publishing intent ──
+# none = do not publish; draft = create a draft / stop at the editor; published = publish directly
 platforms:
   zhihu:
     mode: draft
-    formula_style: native      # native = 知乎公式卡；fallback = 文字化
+    formula_style: native      # native = Zhihu formula block; fallback = plain text
   xiaohongshu:
-    mode: draft                # 6 张长图 + 短文案
+    mode: draft                # six slides plus short copy
   wechat:
-    mode: draft                # 需要 WECHAT_APPID / WECHAT_APPSECRET 走 API，或 mpub/browser
+    mode: draft                # requires WECHAT_APPID / WECHAT_APPSECRET

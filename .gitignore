@@ -6,5 +6,5 @@ dist/
 .DS_Store
 *.log
 
-# 每篇论文的中间产物与成品（内容不属于代码仓库）
+# Per-paper artifacts and outputs; content does not belong in the code repo
 articles/

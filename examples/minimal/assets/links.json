@@ -1,0 +1,29 @@
+{
+  "slug": "minimal",
+  "generatedAt": "2026-01-02T08:15:00.000Z",
+  "github": [
+    {
+      "url": "https://github.com/example-org/tinylm",
+      "host": "github.com",
+      "repo": "example-org/tinylm"
+    }
+  ],
+  "huggingface": [],
+  "modelscope": [],
+  "project": [
+    {
+      "url": "https://example.org/tinylm",
+      "host": "example.org",
+      "label": "项目页"
+    }
+  ],
+  "paper": [
+    {
+      "url": "https://arxiv.org/abs/2501.00001",
+      "host": "arxiv.org",
+      "label": "arXiv"
+    }
+  ],
+  "other": [],
+  "related": []
+}

@@ -1,0 +1,11 @@
+[
+  {
+    "file": "figs/main.pdf",
+    "png": "examples/minimal/assets/fig-main.png",
+    "bytes": 184320,
+    "section": "主要结果",
+    "caption": "Throughput and acceptance length of TinyLM against the single-token baseline at 1.3B and 7B.",
+    "label": "fig:main",
+    "width": 1
+  }
+]

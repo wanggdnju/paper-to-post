@@ -1,0 +1,322 @@
+{
+  "slug": "minimal",
+  "generated_at": "2026-01-02T08:20:00.000Z",
+  "source": "examples/minimal/source/paper.tex",
+  "table_count": 2,
+  "fact_count": 21,
+  "text_number_count": 2,
+  "tables": [
+    {
+      "file": "examples/minimal/source/tables/main.tex",
+      "label": "tab:main",
+      "caption": "Decoding throughput and accuracy of TinyLM against the single-token baseline. All runs use batch size 1 on a single GPU.",
+      "columns": [
+        "Model",
+        "Method",
+        "Throughput / Speedup",
+        "Mean / Acceptance length",
+        "MMLU / Accuracy"
+      ]
+    },
+    {
+      "file": "examples/minimal/source/tables/per_task.tex",
+      "label": "tab:task",
+      "caption": "Per-task speedup and acceptance length for TinyLM.",
+      "columns": [
+        "Task",
+        "1.3B / Speedup",
+        "7B / Speedup",
+        "1.3B / Acceptance length"
+      ]
+    }
+  ],
+  "facts": [
+    {
+      "id": "tab:main@1.3B:baseline:Throughput / Speedup",
+      "table": "tab:main",
+      "caption": "Decoding throughput and accuracy of TinyLM against the single-token baseline. All runs use batch size 1 on a single GPU.",
+      "group": "1.3B",
+      "method": "baseline",
+      "column": "Throughput / Speedup",
+      "value": "1.00x",
+      "parts": [
+        "1.00x"
+      ]
+    },
+    {
+      "id": "tab:main@1.3B:TinyLM:Throughput / Speedup",
+      "table": "tab:main",
+      "caption": "Decoding throughput and accuracy of TinyLM against the single-token baseline. All runs use batch size 1 on a single GPU.",
+      "group": "1.3B",
+      "method": "TinyLM",
+      "column": "Throughput / Speedup",
+      "value": "1.93x",
+      "parts": [
+        "1.93x"
+      ]
+    },
+    {
+      "id": "tab:main@1.3B:baseline:Mean / Acceptance length",
+      "table": "tab:main",
+      "caption": "Decoding throughput and accuracy of TinyLM against the single-token baseline. All runs use batch size 1 on a single GPU.",
+      "group": "1.3B",
+      "method": "baseline",
+      "column": "Mean / Acceptance length",
+      "value": "1.00",
+      "parts": [
+        "1.00"
+      ]
+    },
+    {
+      "id": "tab:main@1.3B:TinyLM:Mean / Acceptance length",
+      "table": "tab:main",
+      "caption": "Decoding throughput and accuracy of TinyLM against the single-token baseline. All runs use batch size 1 on a single GPU.",
+      "group": "1.3B",
+      "method": "TinyLM",
+      "column": "Mean / Acceptance length",
+      "value": "4.82",
+      "parts": [
+        "4.82"
+      ]
+    },
+    {
+      "id": "tab:main@1.3B:baseline:MMLU / Accuracy",
+      "table": "tab:main",
+      "caption": "Decoding throughput and accuracy of TinyLM against the single-token baseline. All runs use batch size 1 on a single GPU.",
+      "group": "1.3B",
+      "method": "baseline",
+      "column": "MMLU / Accuracy",
+      "value": "41.3",
+      "parts": [
+        "41.3"
+      ]
+    },
+    {
+      "id": "tab:main@1.3B:TinyLM:MMLU / Accuracy",
+      "table": "tab:main",
+      "caption": "Decoding throughput and accuracy of TinyLM against the single-token baseline. All runs use batch size 1 on a single GPU.",
+      "group": "1.3B",
+      "method": "TinyLM",
+      "column": "MMLU / Accuracy",
+      "value": "41.1",
+      "parts": [
+        "41.1"
+      ]
+    },
+    {
+      "id": "tab:main@7B:baseline:Throughput / Speedup",
+      "table": "tab:main",
+      "caption": "Decoding throughput and accuracy of TinyLM against the single-token baseline. All runs use batch size 1 on a single GPU.",
+      "group": "7B",
+      "method": "baseline",
+      "column": "Throughput / Speedup",
+      "value": "1.00x",
+      "parts": [
+        "1.00x"
+      ]
+    },
+    {
+      "id": "tab:main@7B:TinyLM:Throughput / Speedup",
+      "table": "tab:main",
+      "caption": "Decoding throughput and accuracy of TinyLM against the single-token baseline. All runs use batch size 1 on a single GPU.",
+      "group": "7B",
+      "method": "TinyLM",
+      "column": "Throughput / Speedup",
+      "value": "2.41x",
+      "parts": [
+        "2.41x"
+      ]
+    },
+    {
+      "id": "tab:main@7B:baseline:Mean / Acceptance length",
+      "table": "tab:main",
+      "caption": "Decoding throughput and accuracy of TinyLM against the single-token baseline. All runs use batch size 1 on a single GPU.",
+      "group": "7B",
+      "method": "baseline",
+      "column": "Mean / Acceptance length",
+      "value": "1.00",
+      "parts": [
+        "1.00"
+      ]
+    },
+    {
+      "id": "tab:main@7B:TinyLM:Mean / Acceptance length",
+      "table": "tab:main",
+      "caption": "Decoding throughput and accuracy of TinyLM against the single-token baseline. All runs use batch size 1 on a single GPU.",
+      "group": "7B",
+      "method": "TinyLM",
+      "column": "Mean / Acceptance length",
+      "value": "5.36",
+      "parts": [
+        "5.36"
+      ]
+    },
+    {
+      "id": "tab:main@7B:baseline:MMLU / Accuracy",
+      "table": "tab:main",
+      "caption": "Decoding throughput and accuracy of TinyLM against the single-token baseline. All runs use batch size 1 on a single GPU.",
+      "group": "7B",
+      "method": "baseline",
+      "column": "MMLU / Accuracy",
+      "value": "58.7",
+      "parts": [
+        "58.7"
+      ]
+    },
+    {
+      "id": "tab:main@7B:TinyLM:MMLU / Accuracy",
+      "table": "tab:main",
+      "caption": "Decoding throughput and accuracy of TinyLM against the single-token baseline. All runs use batch size 1 on a single GPU.",
+      "group": "7B",
+      "method": "TinyLM",
+      "column": "MMLU / Accuracy",
+      "value": "58.1",
+      "parts": [
+        "58.1"
+      ]
+    },
+    {
+      "id": "tab:task@MT-bench:TinyLM:1.3B / Speedup",
+      "table": "tab:task",
+      "caption": "Per-task speedup and acceptance length for TinyLM.",
+      "group": "MT-bench",
+      "method": "TinyLM",
+      "column": "1.3B / Speedup",
+      "value": "1.93x",
+      "parts": [
+        "1.93x"
+      ]
+    },
+    {
+      "id": "tab:task@MT-bench:TinyLM:7B / Speedup",
+      "table": "tab:task",
+      "caption": "Per-task speedup and acceptance length for TinyLM.",
+      "group": "MT-bench",
+      "method": "TinyLM",
+      "column": "7B / Speedup",
+      "value": "2.41x",
+      "parts": [
+        "2.41x"
+      ]
+    },
+    {
+      "id": "tab:task@MT-bench:TinyLM:1.3B / Acceptance length",
+      "table": "tab:task",
+      "caption": "Per-task speedup and acceptance length for TinyLM.",
+      "group": "MT-bench",
+      "method": "TinyLM",
+      "column": "1.3B / Acceptance length",
+      "value": "4.82",
+      "parts": [
+        "4.82"
+      ]
+    },
+    {
+      "id": "tab:task@GSM8K:TinyLM:1.3B / Speedup",
+      "table": "tab:task",
+      "caption": "Per-task speedup and acceptance length for TinyLM.",
+      "group": "GSM8K",
+      "method": "TinyLM",
+      "column": "1.3B / Speedup",
+      "value": "1.71x",
+      "parts": [
+        "1.71x"
+      ]
+    },
+    {
+      "id": "tab:task@GSM8K:TinyLM:7B / Speedup",
+      "table": "tab:task",
+      "caption": "Per-task speedup and acceptance length for TinyLM.",
+      "group": "GSM8K",
+      "method": "TinyLM",
+      "column": "7B / Speedup",
+      "value": "2.15x",
+      "parts": [
+        "2.15x"
+      ]
+    },
+    {
+      "id": "tab:task@GSM8K:TinyLM:1.3B / Acceptance length",
+      "table": "tab:task",
+      "caption": "Per-task speedup and acceptance length for TinyLM.",
+      "group": "GSM8K",
+      "method": "TinyLM",
+      "column": "1.3B / Acceptance length",
+      "value": "4.31",
+      "parts": [
+        "4.31"
+      ]
+    },
+    {
+      "id": "tab:task@HumanEval:TinyLM:1.3B / Speedup",
+      "table": "tab:task",
+      "caption": "Per-task speedup and acceptance length for TinyLM.",
+      "group": "HumanEval",
+      "method": "TinyLM",
+      "column": "1.3B / Speedup",
+      "value": "1.58x",
+      "parts": [
+        "1.58x"
+      ]
+    },
+    {
+      "id": "tab:task@HumanEval:TinyLM:7B / Speedup",
+      "table": "tab:task",
+      "caption": "Per-task speedup and acceptance length for TinyLM.",
+      "group": "HumanEval",
+      "method": "TinyLM",
+      "column": "7B / Speedup",
+      "value": "1.96x",
+      "parts": [
+        "1.96x"
+      ]
+    },
+    {
+      "id": "tab:task@HumanEval:TinyLM:1.3B / Acceptance length",
+      "table": "tab:task",
+      "caption": "Per-task speedup and acceptance length for TinyLM.",
+      "group": "HumanEval",
+      "method": "TinyLM",
+      "column": "1.3B / Acceptance length",
+      "value": "3.94",
+      "parts": [
+        "3.94"
+      ]
+    }
+  ],
+  "text_numbers": [
+    {
+      "id": null,
+      "table": "text:paper.tex",
+      "source": "text",
+      "group": "",
+      "method": "",
+      "column": "",
+      "value": "38",
+      "unit": "%",
+      "context": "Training memory increases by 38% compared with the single-token objective."
+    },
+    {
+      "id": null,
+      "table": "text:paper.tex",
+      "source": "text",
+      "group": "",
+      "method": "",
+      "column": "",
+      "value": "3",
+      "unit": "",
+      "context": "The draft head predicts 3 tokens per step."
+    },
+    {
+      "id": null,
+      "table": "text:paper.tex",
+      "source": "text",
+      "group": "",
+      "method": "",
+      "column": "",
+      "value": "1.3",
+      "unit": "B",
+      "context": "We train TinyLM on a 1.3B and a 7B base model."
+    }
+  ]
+}

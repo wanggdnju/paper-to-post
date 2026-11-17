@@ -77,6 +77,21 @@ npm run publish:platform -- --slug=mypaper --to=wechat
 
 `npm run publish -- --status` prints the state of every article.
 
+## Example
+
+[`examples/minimal/`](examples/minimal/) contains a complete article directory for a
+fictional paper: metadata, writing brief, fact table, outline, the article itself, the
+critic report and the rendered figures. It passes all 34 machine checks and renders to
+both Zhihu HTML and a self-contained page.
+
+```bash
+cp -r examples/minimal articles/minimal
+npm run publish:check -- --slug=minimal
+npm run render:zhihu -- --slug=minimal
+```
+
+Use it as a reference for file structure, or as a fixture when changing the pipeline.
+
 ## Publishing drivers
 
 Platform-specific publishing is isolated in `scripts/drivers/`. The core pipeline

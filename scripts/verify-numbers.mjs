@@ -58,12 +58,32 @@ if (!existsSync(full)) {
 const body = readFileSync(full, 'utf8');
 
 // ---- 建立索引 ----
-/** 值 → 出处列表（表格事实 + 正文数字） */
+/**
+ * 值 → 出处列表（表格事实 + 正文数字）。
+ *
+ * 键带上单位类别：`1.93x` / `1.93×` / `1.93倍` 归成同一类，而 `4.22`（接受长度）
+ * 与 `4.22x`（加速比）仍是两个键。不带单位类别会出两种错——写成 `×` 的加速比
+ * 匹配不上表里的 `x`，全部降级成「派生值，需人工确认」，精确命中的信号就失效了；
+ * 而如果干脆忽略单位，接受长度和加速比又会互相顶替。
+ */
+const unitClass = (raw) => {
+  const s = String(raw);
+  if (/[×x倍]$/.test(s)) return 'x';
+  if (/%$/.test(s)) return '%';
+  return '';
+};
+const valueKey = (raw) => {
+  const s = String(raw).replace(/^[+−-]/, '');
+  const num = s.match(/\d+(?:\.\d+)?/)?.[0];
+  if (num === undefined) return s;
+  const cls = unitClass(s);
+  return cls ? `${num}|${cls}` : num;
+};
 const byValue = new Map();
 /** 表 id → 该表的事实列表（算差值时只在同表内找） */
 const byTable = new Map();
 const index = (key, entry) => {
-  const k = String(key).replace(/^[+−-]/, '');
+  const k = valueKey(key);
   if (!byValue.has(k)) byValue.set(k, []);
   byValue.get(k).push(entry);
 };
@@ -152,12 +172,18 @@ const derived = [];
 const unverified = [];
 
 /** 按出现的精度做舍入比对：「14.0」能对上表里的「14.02」。 */
-function roundMatches(value) {
+function roundMatches(value, unit = '') {
   const decimals = (value.split('.')[1] ?? '').length;
   const target = Number(value);
+  // 只在同一单位类别内舍入：`4.2` 不该被「4.22x」满足，反之亦然。
+  const cls = unitClass(`${value}${unit}`);
   const out = [];
   for (const [key, entries] of byValue) {
-    const v = Number(key);
+    const core = String(key).match(/^\d+(?:\.\d+)?/)?.[0];
+    if (core === undefined) continue;
+    const keyCls = key.includes('|') ? key.split('|')[1] : '';
+    if (keyCls !== cls) continue;
+    const v = Number(core);
     if (!Number.isFinite(v)) continue;
     if (Number(v.toFixed(decimals)) === target) out.push(...entries.map((e) => ({ ...e, rawValue: key })));
   }
@@ -165,7 +191,7 @@ function roundMatches(value) {
 }
 
 for (const occ of occurrences) {
-  const hits = byValue.get(occ.value);
+  const hits = byValue.get(valueKey(`${occ.value}${occ.unit}`));
   if (hits?.length) {
     verified.push({ ...occ, from: hits[0] });
     continue;
@@ -173,7 +199,7 @@ for (const occ of occurrences) {
   // 舍入：稿件里写 1 位小数、表里是 2 位，是有意为之的排版选择。
   // 但**不能静默通过**——历史上出过「把 GSM8K 位置 8 的单点值 31.87 舍成 31.8，
   // 当成三位置均值写进 7 处」。所以这里报出来源格子，让人自己确认取的是对的那一格。
-  const near = roundMatches(occ.value);
+  const near = roundMatches(occ.value, occ.unit);
   if (near.length) {
     rounded.push({ ...occ, from: near[0], candidates: near.slice(0, 4) });
     continue;

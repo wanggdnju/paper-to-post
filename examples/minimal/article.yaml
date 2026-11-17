@@ -1,0 +1,56 @@
+# Per-article metadata and state machine. Advanced by scripts/publish.mjs;
+# do not edit the status field by hand.
+arxiv_id: "2501.00001"
+title: "TinyLM: Multi-Token Prediction for Small Language Models"
+authors: "A. Example、B. Sample、C. Placeholder"
+venue: "arXiv 2501.00001"
+slug: "minimal"
+
+status: rendered            # new -> outlined -> drafted -> checked -> reviewed -> rendered -> published
+publish_completed: false
+digest: "TinyLM 把多 token 预测的草稿头训练目标从逐位交叉熵改成平均接受长度，让预测准不准由目标函数本身决定，而不是靠事后调参。1.3B 模型解码吞吐达到 1.93 倍，7B 到 2.41 倍，MMLU 分别只掉 0.2 与 0.6 个点。代价是训练显存增加 38%，适合显存有余、延迟敏感的推理部署。"
+
+cover:
+  big: "多 token 预测"
+  num: "1.93×"
+  unit: "解码吞吐（1.3B 模型）"
+  vs: "基线 1.00×"
+  hook: "小模型也能吃满 GPU"
+  cards: "吞吐~1.93× || 接受长度~4.82 || 准确率~持平 || 代价~显存 +38%"
+
+files:
+  article: "examples/minimal/article.md"
+  zhihu: ""
+  xhs: ""
+  xhs_article: ""
+
+topics:
+  - speculative-decoding
+zhihu_topics:
+  - 大语言模型
+  - 深度学习
+xhs_tags:
+  - 大模型
+  - AI
+  - 论文解读
+  - 推理加速
+  - 机器学习
+  - 程序员
+
+links:
+  code: "https://github.com/example-org/tinylm"
+  paper: "https://arxiv.org/abs/2501.00001"
+
+platforms:
+  zhihu:
+    status: todo
+    url: ""
+  xiaohongshu:
+    status: todo
+    url: ""
+  wechat:
+    status: todo
+    url: ""
+
+created_at: "2026-01-02T08:00:00.000Z"
+updated_at: "2026-01-02T09:30:00.000Z"

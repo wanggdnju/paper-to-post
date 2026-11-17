@@ -1,0 +1,97 @@
+{
+  "slug": "minimal",
+  "title": "TinyLM: Multi-Token Prediction for Small Language Models",
+  "generated_at": "2026-01-02T08:25:00.000Z",
+  "model": "example-model",
+  "elapsed_seconds": 18,
+  "thesis": "TinyLM 让草稿头一次预测 3 个 token，并把接受长度作为训练目标；1.3B 模型解码吞吐 1.93 倍、接受长度 4.82，MMLU 从 41.3 掉到 41.1。代价是训练显存增加 38%。",
+  "sections": [
+    {
+      "id": "s1",
+      "heading": "TL;DR",
+      "claim": "多 token 预测对小模型的收益比大模型更明显，因为小模型的解码瓶颈更集中在串行步数上。",
+      "factIds": [
+        "tab:main@1.3B:TinyLM:Throughput / Speedup",
+        "tab:main@1.3B:baseline:Throughput / Speedup",
+        "tab:main@1.3B:TinyLM:Mean / Acceptance length",
+        "tab:main@1.3B:baseline:Mean / Acceptance length"
+      ],
+      "figures": [],
+      "words": 400,
+      "notes": "数字只引 1.3B 那一组，不要和 7B 混用。"
+    },
+    {
+      "id": "s2",
+      "heading": "引言",
+      "claim": "现有小模型部署受限于单 token 解码的串行性，而不是算力。",
+      "factIds": [],
+      "figures": [],
+      "words": 500,
+      "notes": "只做背景铺垫，不引数字。"
+    },
+    {
+      "id": "s3",
+      "heading": "问题",
+      "claim": "小模型的单步解码延迟占比更高，并行化收益空间更大，但准确率容错更低。",
+      "factIds": [],
+      "figures": [],
+      "words": 550,
+      "notes": "把「为什么小模型特殊」讲清楚。"
+    },
+    {
+      "id": "s4",
+      "heading": "方法",
+      "claim": "草稿头一次预测 3 个 token，用接受长度作为训练目标，而不是逐位交叉熵。",
+      "factIds": [],
+      "figures": [],
+      "words": 900,
+      "notes": "包含训练目标的推导，公式要写成行间公式。"
+    },
+    {
+      "id": "s5",
+      "heading": "实验设置",
+      "claim": "单卡 batch size 1，对比单 token 基线与 TinyLM。",
+      "factIds": [],
+      "figures": [],
+      "words": 400,
+      "notes": "写清硬件、batch size、评测集。"
+    },
+    {
+      "id": "s6",
+      "heading": "主要结果",
+      "claim": "1.3B 上吞吐 1.93 倍、接受长度 4.82；7B 上吞吐 2.41 倍、接受长度 5.36。",
+      "factIds": [
+        "tab:main@1.3B:TinyLM:Throughput / Speedup",
+        "tab:main@1.3B:TinyLM:Mean / Acceptance length",
+        "tab:main@7B:TinyLM:Throughput / Speedup",
+        "tab:main@7B:TinyLM:Mean / Acceptance length"
+      ],
+      "figures": ["figs/main.png"],
+      "words": 700,
+      "notes": "两组模型分开写，不要合并成一句。"
+    },
+    {
+      "id": "s7",
+      "heading": "深入分析",
+      "claim": "准确率几乎不变（41.3 到 41.1；58.7 到 58.1），代价集中在训练显存。",
+      "factIds": [
+        "tab:main@1.3B:baseline:MMLU / Accuracy",
+        "tab:main@1.3B:TinyLM:MMLU / Accuracy",
+        "tab:main@7B:baseline:MMLU / Accuracy",
+        "tab:main@7B:TinyLM:MMLU / Accuracy"
+      ],
+      "figures": [],
+      "words": 650,
+      "notes": "显存 +38% 来自正文，不是表格。"
+    },
+    {
+      "id": "s8",
+      "heading": "讨论与判断",
+      "claim": "适合显存有余、延迟敏感的部署；不适合训练预算紧张的场景。",
+      "factIds": [],
+      "figures": [],
+      "words": 500,
+      "notes": "给出适用与不适用两类场景。"
+    }
+  ]
+}

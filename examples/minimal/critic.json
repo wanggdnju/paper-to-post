@@ -1,0 +1,27 @@
+{
+  "slug": "minimal",
+  "generated_at": "2026-01-02T08:35:00.000Z",
+  "model": "example-model",
+  "paragraphs_reviewed": 8,
+  "findings": [
+    {
+      "severity": "low",
+      "quote": "7B 的收益更大，与「大模型草稿更容易被接受」的直觉一致",
+      "type": "unsupported_causal",
+      "problem": "论文没有给出接受率按模型规模分解的解释，这句话是作者的推测。",
+      "suggestion": "改成明确的推测措辞，或删掉因果解释只陈述现象。"
+    },
+    {
+      "severity": "low",
+      "quote": "如果长尾输入的接受率掉到接近基线，那部分请求的收益会消失",
+      "type": "speculation",
+      "problem": "这是分析性推测，不是论文结论。",
+      "suggestion": "保留，但确保上下文已经说明这是推断而非实验结论。"
+    }
+  ],
+  "summary": {
+    "high": 0,
+    "medium": 0,
+    "low": 2
+  }
+}

@@ -122,38 +122,83 @@ npm run render:zhihu -- --slug=minimal
 
 Use it as a reference for file structure, or as a fixture when changing the pipeline.
 
-## Publishing drivers
+## Publishing
 
-Platform-specific publishing is isolated in `scripts/drivers/`. The core pipeline
-renders artifacts; a driver decides what to do with them.
+Everything up to a saved draft is automated. Only the final publish action is manual.
 
-| Driver | Behaviour | Requirements |
+| Platform | Rendered | Uploaded | Written into editor | Verified | Last step |
+| --- | --- | --- | --- | --- | --- |
+| WeChat MP | ✓ | ✓ | ✓ | ✓ read back from the API | You press send |
+| Zhihu | ✓ | ✓ | ✓ | ✓ after page reload | You press publish |
+| Xiaohongshu | ✓ | ✓ | ✓ | ✓ character count | You press publish |
+| Any other | ✓ | — | — | — | You paste it |
+
+"Written into editor" is the part most tools stop short of. Here it means: title,
+body text, images uploaded to the platform's own CDN, figure captions attached to
+their figures, display formulas rendered as native formula blocks, topic chips
+applied, and a draft saved.
+
+### Drivers
+
+Platform behaviour is isolated behind `scripts/drivers/`. Two ship as built-ins:
+
+| Driver | What it automates | Requires |
 | --- | --- | --- |
-| `manual` (default) | Lists every artifact under `dist/` for manual upload | None |
-| `wechat` | Official WeChat MP API: upload images, create or update a draft, verify by reading it back | `WECHAT_APPID`, `WECHAT_APPSECRET` |
+| `manual` | Nothing — lists artifacts for you to paste | none |
+| `wechat` | WeChat MP API: upload images, create or update a draft, read it back, delete stale drafts | `WECHAT_APPID`, `WECHAT_APPSECRET` |
 
 ```bash
-npm run publish:platform -- --slug=mypaper                # manual
+npm run publish:platform -- --slug=mypaper                # list artifacts
 npm run publish:platform -- --slug=mypaper --to=wechat    # WeChat draft
 ```
 
-Zhihu and Xiaohongshu are not built in. Both are web-editor only, so automating them
-requires a specific browser tool; shipping one tool's integration would make the
-repository unusable for anyone without it.
+### Browser automation (Zhihu, Xiaohongshu)
 
-[`examples/drivers/`](examples/drivers/) contains a working implementation of both,
-built on browser-skill's `bsk` CLI. Copy it in when you have the tool installed:
+Both platforms are web-editor only — there is no API that accepts an article. Automating
+them means driving a real browser, which requires a specific tool, so they are not
+built in. [`examples/drivers/`](examples/drivers/) contains a complete implementation
+built on browser-skill's `bsk` CLI:
 
 ```bash
 cp examples/drivers/*.mjs drivers/
 npm run publish:platform -- --slug=mypaper --to=zhihu
+npm run publish:platform -- --slug=mypaper --to=xiaohongshu
 ```
 
-An adapter for any other tool can be added the same way — create `drivers/<id>.mjs`
-in the project root. See [docs/drivers.md](docs/drivers.md) for the interface.
+What runs without you touching the keyboard:
 
-**No driver presses publish.** Drafts and prefilled editors only; the final action is
-left to the operator.
+**Zhihu** — switches to the editor, sets the title, pastes the body as HTML, uploads
+each image as a file paste (Zhihu no longer ingests `data:` URIs), attaches captions to
+their figures, writes display formulas as native `data-eeimg="2"` blocks, builds the
+sidebar table of contents, applies up to three topic chips, records the draft URL back
+into `article.yaml`, then reloads the page and compares the result field by field
+against the rendered HTML.
+
+**Xiaohongshu** — switches to image mode, uploads all six slides in one batch (one at a
+time silently drops), sets the title within the 20-character limit, writes the body and
+hashtags in a single ProseMirror pass, saves the draft.
+
+Both stop before publishing. See [examples/drivers/README.md](examples/drivers/README.md)
+for setup, and [docs/drivers.md](docs/drivers.md) for the interface if you want to wire
+up a different tool.
+
+### Why WeChat is fully automated and the other two need a browser
+
+| | WeChat MP | Zhihu / Xiaohongshu |
+| --- | --- | --- |
+| Publish API | Yes — `draft/add`, `draft/get`, media upload | None |
+| Draft creation | HTTP request | Simulated input in a web editor |
+| Verification | Read the draft back from the server | Reload and inspect the DOM |
+| Stability | Versioned, announced API | Editor changes break automation |
+
+WeChat's API is a supported channel for third-party tools. Zhihu's Draft.js and
+Xiaohongshu's ProseMirror are front-end editors with no write endpoint at all.
+
+Even so, the WeChat driver only creates drafts. Mass-send cannot be undone, and the
+real value of the API is `draft/get` — reading the server's copy back to check that the
+platform did not rewrite your HTML on the way in.
+
+**No driver presses publish.** Drafts and prefilled editors only.
 
 ## Project structure
 

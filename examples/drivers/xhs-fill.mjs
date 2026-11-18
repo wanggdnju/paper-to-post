@@ -185,3 +185,22 @@ if (args.save) {
 }
 
 console.log('\n⛔ 不要点「发布」。');
+
+/*
+ * ── 关于「回包丢失但内容其实写进去了」（2026-11-18 实测）──
+ *
+ * 传完图片后编辑器会持续处理图片，CDP 在这期间返回
+ * `Previous operation is still settling`。此时发起的写入动作，执行可能已经成功，
+ * 但结果回包丢了——bsk 会把它记成 UNKNOWN 并冻结整个标签页（`|| bsk ledger status` 可查）。
+ *
+ * 实测那一次：脚本报「正文只有 0 字符」，但核对编辑器时正文 414 字、6 个话题全部
+ * 转成了 `[话题]#` 形式——**内容完整，只是回包没回来**。
+ *
+ * 所以看到这个报错不要立刻重写：先 sync 一次读编辑器实际内容。
+ * 重写会把已经正确的内容覆盖掉，而 ProseMirror 只有一次写入机会。
+ *
+ * 若标签页被冻结（后续动作全报 `prior action has an unconfirmed side effect`）：
+ *   bsk ledger status  --session <s>     # 看哪个 op 是 UNKNOWN
+ *   bsk ledger resolve --session <s> --operation-id <op>
+ * 和解之后再操作，不要盲目重放。
+ */

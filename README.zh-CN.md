@@ -116,49 +116,75 @@ npm run publish:check -- --slug=minimal
 npm run render:zhihu -- --slug=minimal
 ```
 
-## 发布：可插拔驱动
+## 发布：自动到什么程度
 
-平台差异全部封在 `scripts/drivers/` 里。核心流程只负责渲染，驱动决定怎么送到平台。
+**一直到「草稿已保存」全是自动的。只有最后那一下点发布是人来。**
 
-| 驱动 | 做什么 | 需要 |
+| 平台 | 渲染 | 传图 | 写进编辑器 | 验收 | 最后一步 |
+| --- | --- | --- | --- | --- | --- |
+| 公众号 | ✓ | ✓ | ✓ | ✓ 从服务器读回草稿 | 你点群发 |
+| 知乎 | ✓ | ✓ | ✓ | ✓ 刷新页面后逐项比对 | 你点发布 |
+| 小红书 | ✓ | ✓ | ✓ | ✓ 字数与图片计数 | 你点发布 |
+| 其他 | ✓ | — | — | — | 你自己粘 |
+
+「写进编辑器」这一格是多数工具止步的地方。这里指的是：标题、正文、图片上传到平台
+自己的图床、图注挂到对应图片、行间公式写成平台原生公式块、话题标签、以及存草稿。
+
+### 驱动
+
+平台差异封在 `scripts/drivers/` 里。内置两个：
+
+| 驱动 | 自动做什么 | 需要 |
 | --- | --- | --- |
-| `manual`（默认） | 列出 `dist/` 下全部产物，你自己复制粘贴 | 无 |
-| `wechat` | 公众号官方 API：传图 → 建/更新草稿 → 读回验证 → 清旧稿 | `WECHAT_APPID`、`WECHAT_APPSECRET` |
+| `manual`（默认） | 不自动，只列出产物让你复制 | 无 |
+| `wechat` | 公众号 API：传图 → 建/更新草稿 → 读回验证 → 清旧稿 | `WECHAT_APPID`、`WECHAT_APPSECRET` |
 
 ```bash
-npm run publish:platform -- --slug=mypaper                # 手动
+npm run publish:platform -- --slug=mypaper                # 列产物
 npm run publish:platform -- --slug=mypaper --to=wechat    # 公众号草稿
 ```
 
-知乎和小红书**没有内置**。这两个平台只有网页编辑器，自动化必须依赖具体的浏览器工具；
-把某一种工具写死在主流程里，别人 clone 下来就跑不了。
+### 浏览器自动化（知乎、小红书）
 
-但[`examples/drivers/`](examples/drivers/) 里带了**一份能用的实现**，基于 browser-skill 的
-`bsk` CLI，需要时复制过去即可：
+这两个平台**没有任何接口能写入文章**，只有网页编辑器。要自动化就必须驱动真实浏览器，
+而那必然依赖具体工具，所以不内置。但[`examples/drivers/`](examples/drivers/) 里带了
+**一份完整可用的实现**，基于 browser-skill 的 `bsk` CLI：
 
 ```bash
 cp examples/drivers/*.mjs drivers/
 npm run publish:platform -- --slug=mypaper --to=zhihu
+npm run publish:platform -- --slug=mypaper --to=xiaohongshu
 ```
 
-接口说明见 [docs/drivers.md](docs/drivers.md)。
+不碰键盘就能完成的动作：
 
-**任何驱动都不会点"发送"。** 只做到草稿或输入框，最后一下必须由人点。
+**知乎** —— 切到编辑器、填标题、正文按图片位置切成 N+1 段交替粘贴（文字走 HTML、
+图片走「文件粘贴」，因为知乎已不再接收 `data:` URI 图片）、图注填进 figcaption、
+行间公式写成原生 `data-eeimg="2"` 块、生成侧边目录、设置最多 3 个话题、
+把草稿地址回写进 `article.yaml`，最后**刷新页面**逐项和渲染产物比对。
 
-### 为什么公众号能自动、知乎不能
+**小红书** —— 切到图文模式、六张切图**一次全传**（逐个传会被静默忽略）、
+按 20 字上限填标题、正文与话题在一次 ProseMirror 写入里完成、存草稿。
+
+两者都停在发布之前。安装见 [examples/drivers/README.md](examples/drivers/README.md)，
+想接别的工具看 [docs/drivers.md](docs/drivers.md)。
+
+### 为什么公众号能全自动、另两个要开浏览器
 
 | | 公众号 | 知乎 / 小红书 |
 | --- | --- | --- |
-| 开放 API | 有（`draft/add`、`draft/get`…） | 没有 |
-| 建草稿 | HTTP 请求 | 模拟人操作编辑器 |
-| 读回校验 | 能拿到服务器上的正文 | 只能刷新页面抓 DOM |
-| 稳定性 | 接口变更会发公告 | 编辑器一改版，自动化全废 |
+| 发布接口 | 有（`draft/add`、`draft/get`…） | 没有 |
+| 建草稿 | 一个 HTTP 请求 | 模拟人在编辑器里输入 |
+| 验收 | 从服务器读回正文 | 刷新页面抓 DOM |
+| 稳定性 | 版本化接口，变更会公告 | 编辑器一改版，自动化全废 |
 
-公众号的接口是给第三方工具准备的正式通道。知乎的 Draft.js、小红书的 ProseMirror
-是纯前端编辑器，**没有任何公开接口能写入文章**——只能接管浏览器。
+公众号的接口是给第三方工具准备的正式通道；知乎的 Draft.js、小红书的 ProseMirror
+是纯前端编辑器，**没有写入端点**。
 
-即便如此，公众号驱动也只建草稿、不调群发接口：群发不可撤回，而草稿配合
-`draft/get` 读回校验，才是自动化真正的价值所在。
+即便如此，公众号驱动也只建草稿、不调群发：群发不可撤回，而 `draft/get` 能读回
+服务器上那份、检查平台有没有改写你的 HTML——这才是接口真正的价值。
+
+**任何驱动都不会点「发送」。** 只做到草稿或输入框。
 
 ## 目录结构
 

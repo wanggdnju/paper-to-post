@@ -61,10 +61,9 @@ export default {
     if (!existsSync(join(ctx.articleDir, 'xhs.md'))) {
       ctx.fail(`缺少 articles/${ctx.slug}/xhs.md。先跑 npm run derive -- --slug=${ctx.slug}（需要模型）。`);
     }
-    for (const f of ['xhs-fill.mjs', 'bsk-retry.mjs']) {
+    for (const f of ['xhs-prepare.mjs', 'xhs-fill.mjs', 'bsk-retry.mjs']) {
       if (!existsSync(join(HERE, f))) ctx.fail(`驱动文件缺失：examples/drivers/${f}`);
     }
-    ctx.log('提醒：这个驱动只写正文。请先在编辑器里传好图、填好标题（≤20 字），再继续。');
   },
 
   async publish(ctx) {
@@ -83,10 +82,15 @@ export default {
         log('⚠️ 当前标签页不是小红书。如果你还没打开编辑页，先手动打开并传好图、填好标题。');
       }
 
-      execFileSync(process.execPath,
-        [join(HERE, 'xhs-fill.mjs'), session, `--slug=${slug}`, ...(args.title ? [`--title=${args.title}`] : [])],
-        { cwd: root, encoding: 'utf8', stdio: 'inherit',
-          env: { ...process.env, BSK_BIN: ctx.bsk } });
+      const env = { ...process.env, BSK_BIN: ctx.bsk };
+      const runStage = (script, extra = []) => execFileSync(process.execPath,
+        [join(HERE, script), session, `--slug=${slug}`, ...extra],
+        { cwd: root, encoding: 'utf8', stdio: 'inherit', env });
+
+      // 1) 传图 + 填标题（都在编辑器之外，可以安全重试）
+      runStage('xhs-prepare.mjs', args.title ? [`--title=${args.title}`] : []);
+      // 2) 正文与话题：ProseMirror 只有一次写入机会，必须排在最后
+      runStage('xhs-fill.mjs', args.title ? [`--title=${args.title}`] : []);
 
       return {
         message: '正文与话题已写入并暂存，等你点发布',

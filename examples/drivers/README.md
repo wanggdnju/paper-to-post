@@ -39,12 +39,13 @@ half-filling an editor.
 
 | Driver | Automated | Still manual |
 | --- | --- | --- |
-| `zhihu` | Title, body paste, images, figure captions, formulas, topic chips, draft lookup, refresh-and-verify | Reviewing layout, pressing publish |
-| `xiaohongshu` | Body text and hashtags, save-draft | Uploading the six images, setting the title, pressing publish |
+| `zhihu` | Title, body paste, images, figure captions, formulas, sidebar TOC, topic chips, draft URL writeback, refresh-and-verify | Reviewing layout, pressing publish |
+| `xiaohongshu` | Image upload, title, body, hashtags, save-draft | Pressing publish |
 
-Xiaohongshu is deliberately partial. Its editor has two identically named upload
-buttons and its overlay flow has changed repeatedly; automating that costs more to
-maintain than it saves. The body text is the hard part, and that is automated.
+Xiaohongshu used to be body-only. The upload step turned out to be reliable once the
+two gotchas were handled: there are two identically named "上传图文" tabs and only the
+second one responds, and all six images must go in a single `upload` call — uploading
+them one at a time silently drops everything after the first.
 
 **Neither driver presses publish.** Both stop at a saved draft.
 
@@ -53,6 +54,7 @@ maintain than it saves. The body text is the hard part, and that is automated.
 | File | Role |
 | --- | --- |
 | `zhihu.mjs` / `xiaohongshu.mjs` | Driver adapters implementing the interface in `scripts/drivers/index.mjs` |
+| `xhs-prepare.mjs` | Xiaohongshu: switch to image mode, upload all slides, set the title |
 | `bsk-retry.mjs` | Thin bsk wrapper: re-syncs before every action, retries transient failures |
 | `zhihu-fill.mjs` | Fills the Draft.js editor: text as HTML paste, images as file paste |
 | `zhihu-verify.mjs` | Forces a reload, then compares the editor against `dist/zhihu/<slug>.html` |
@@ -62,7 +64,7 @@ Read `zhihu.mjs` first — it shows the whole shape of a driver: preflight, sess
 lifecycle, delegation to a script, verification, and cleanup of the session in a
 `finally` block.
 
-## Two things that will bite you
+## Three things that will bite you
 
 **`bsk` may not be on PATH.** The official installer writes to `~/.local/bin`. The
 drivers resolve the binary once and pass it to child scripts via `BSK_BIN`, because
@@ -71,6 +73,23 @@ otherwise the parent finds it and the child fails with `spawnSync bsk ENOENT`.
 **Sessions are browser tabs.** If a driver throws between starting a session and
 stopping it, tabs are left open. Both adapters start the session inside the `try` and
 stop it in `finally`. If you copy this structure, keep that ordering.
+
+**A write can succeed while its reply is lost.** After uploading images, the editor
+keeps processing them and CDP starts answering `Previous operation is still settling`.
+A write issued in that window may land, but bsk never receives confirmation, so it
+records the operation as `UNKNOWN` and freezes the tab — every later action fails with
+`a prior action has an unconfirmed side effect`.
+
+Observed once: the script reported "body is 0 characters" while the editor actually held
+414 characters and all hashtags. Before rewriting, sync and read the editor:
+
+```bash
+bsk ledger status  --session <s>                              # find the UNKNOWN op
+bsk ledger resolve --session <s> --operation-id <op>          # reconcile, then continue
+```
+
+Rewriting is the wrong recovery: ProseMirror accepts one write, and the first one may
+already have been correct.
 
 ## The behaviours these encode
 

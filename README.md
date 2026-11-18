@@ -3,11 +3,12 @@
   <img src="assets/logo-dark.svg#gh-dark-mode-only" alt="paper-to-post" width="330">
 </p>
 
-<p align="center"><b>Every number in the output traces back to the paper.</b></p>
+<p align="center"><b>From an arXiv link to a saved draft, without touching the editor.</b></p>
 
 <p align="center">
-  Turn an arXiv paper into publication-ready drafts for multiple platforms —<br>
-  and fail the build when the prose disagrees with the source.
+  Research, write, verify and fill in the platform editor — title, body, images,<br>
+  formulas, captions and topics — then stop before the publish button.<br>
+  Every number in the result traces back to the paper.
 </p>
 
 <p align="center">

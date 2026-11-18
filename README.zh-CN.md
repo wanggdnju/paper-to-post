@@ -3,11 +3,12 @@
   <img src="assets/logo-dark.svg#gh-dark-mode-only" alt="paper-to-post" width="330">
 </p>
 
-<p align="center"><b>产出里的每一个数字，都能追溯到论文原文。</b></p>
+<p align="center"><b>给一个 arXiv 链接，拿到一份已存好的草稿——全程不碰编辑器。</b></p>
 
 <p align="center">
-  把一篇 arXiv 论文变成可直接发布的解读稿——<br>
-  正文和原文对不上时，构建直接失败。
+  调研、写稿、核对，然后自动填进平台编辑器：标题、正文、图片、<br>
+  公式、图注、话题；停在发布按钮之前。<br>
+  产出里的每一个数字，都能追溯到论文原文。
 </p>
 
 <p align="center">

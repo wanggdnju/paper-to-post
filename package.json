@@ -2,7 +2,7 @@
   "name": "paper-to-post",
   "version": "0.1.0",
   "private": false,
-  "description": "From arXiv paper to publish-ready drafts for Zhihu, WeChat and Xiaohongshu, with every number traced to the source.",
+  "description": "From an arXiv link to a saved draft in the platform editor — research, write, verify, and fill in title, body, images, formulas and topics.",
   "type": "module",
   "license": "MIT",
   "engines": {

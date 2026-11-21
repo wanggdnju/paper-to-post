@@ -51,6 +51,9 @@ if (args.pdf) {
       join(ROOT, 'scripts/lib/pdf-table.swift'),
       String(args.pdf), String(args.page ?? 1), String(args.caption ?? 'Table 1'),
       outPng, String(args.dpi ?? 300),
+      // 有些模板把 \caption 放在表格**下方**（DFlare Table 2 就是这样）。
+      // 不给这个标记时按「caption 在上」处理，会顺着下方正文一路裁。
+      args['caption-below'] ? 'below' : 'above',
     ], { encoding: 'utf8' });
     result = JSON.parse(stdout);
   } catch (error) {
@@ -86,12 +89,95 @@ const katexFonts = (() => {
   });
 })();
 
+/**
+ * 按**平衡花括号**解析 `\\命令{...}{...}`，返回替换后的文本。
+ *
+ * 为什么不能用正则：`\\multicolumn{8}{l}{\\textbf{GSM8K}}` 的内层有嵌套花括号，
+ * 非贪婪 `\{([\s\S]*?)\}` 会在第一个 `}` 处截断，拿到 `\textbf{GSM8K`，
+ * 于是 `\textbf{` 永远匹配不到闭合括号，最后被通用剥命令规则变成字面
+ * `\textbfGSM8K` 印在表格里（2026-11-19 Domino 同数据表实测，用户截图看到）。
+ * 贪婪版本又会在同一行里吞并后面的命令。两个都不对，只能按层级数括号。
+ *
+ * @param {string} text
+ * @param {string} cmd 命令名，不含反斜杠
+ * @param {(args:string[], match:string)=>string} fn 收到各参数内容（已去括号）
+ */
+function replaceBalancedCommand(text, cmd, fn) {
+  const tag = `\\${cmd}`;
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    const at = text.indexOf(tag, i);
+    if (at < 0) { out += text.slice(i); break; }
+    // 命令名必须在此处结束（后面不是字母）
+    const after = text[at + tag.length];
+    if (after && /[a-zA-Z]/.test(after)) { out += text.slice(i, at + tag.length); i = at + tag.length; continue; }
+    out += text.slice(i, at);
+    let j = at + tag.length;
+    const args = [];
+    let ok = true;
+    // 收集紧随其后的花括号组（容忍中间的可选参数 [...] 和空白）
+    for (let k = 0; k < 3; k++) {
+      while (j < text.length && /\s/.test(text[j])) j++;
+      if (text[j] === '[') { // 可选参数：跳过配对的 ]
+        let depth = 0;
+        while (j < text.length) { if (text[j] === '[') depth++; else if (text[j] === ']') { depth--; if (!depth) { j++; break; } } j++; }
+        continue;
+      }
+      if (text[j] !== '{') break;
+      let depth = 0;
+      const start = j + 1;
+      let end = -1;
+      for (; j < text.length; j++) {
+        if (text[j] === '\\') { j++; continue; }   // 跳过转义的下一个字符
+        if (text[j] === '{') depth++;
+        else if (text[j] === '}') { depth--; if (!depth) { end = j; break; } }
+      }
+      if (end < 0) { ok = false; break; }
+      args.push(text.slice(start, end));
+      j = end + 1;
+    }
+    if (!ok || !args.length) { out += tag; i = at + tag.length; continue; }
+    out += fn(args, text.slice(at, j));
+    i = j;
+  }
+  return out;
+}
+
 /** LaTeX 表格 → HTML。只处理表格相关的子集。 */
 const MATH = [];
+/**
+ * 论文自己的方法宏（`\\method`）该显示成什么。
+ *
+ * 各篇论文都用 `\\method` 指代自己的工作，**值不一样**：DFlash 那篇是 DFlash、
+ * Domino 这篇是 Domino。之前写死成 'DFlash'，于是 Domino 的 caption 印出
+ * 「draft block size for DFlash and DFlash」——同一句话里两个 DFlash，
+ * 读者会以为论文拿自己跟自己比。
+ *
+ * 默认按 slug 猜一个可读名（domino → Domino），也可用 `--method=名字` 覆盖。
+ */
+const METHOD_NAME = String(args.method ?? (() => {
+  // 优先读 article.yaml 的 title：冒号前就是论文自己的规范写法
+  // （`DFlash：…` / `Domino：…`）。按 slug 首字母大写会把 DFlash 写成 Dflash。
+  try {
+    const yml = fs.readFileSync(join(ROOT, 'articles', String(args.slug), 'article.yaml'), 'utf8');
+    const t = yml.match(/^title:\s*"?([^"：:\n]+)/m)?.[1]?.trim();
+    if (t) return t;
+  } catch { /* 没有 yaml 就退回 slug */ }
+  const s = String(args.slug);
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Ours';
+})());
 function renderMath(tex) { try { return katex.renderToString(tex, { throwOnError: false }); } catch { return tex; } }
 function latexTableToHtml(tex) {
   let body = tex;
-  const caption = body.match(/\\caption\{([\s\S]*?)\}\s*(?:\\label|\\resizebox|$)/)?.[1] ?? '';
+  // caption 用平衡花括号解析：`\caption{... \shortstack{a\\b} ...}` 里有嵌套 {},
+  // 非贪婪正则会在内层 `}` 处截断，caption 只剩前半句并把后面的 tabular 源
+  // 一起吞进来（2026-11-19 dspine 消融表实测）。
+  let caption = '';
+  replaceBalancedCommand(body, 'caption', (args, match) => {
+    if (!caption) caption = args[0] ?? '';
+    return match;
+  });
   const tabular = body.match(/\\begin\{tabular\*?\}(?:\[[^\]]*\])?\{[^}]*\}([\s\S]*?)\\end\{tabular\*?\}/);
   if (!tabular) throw new Error('没找到 tabular 环境');
   const raw = tabular[1];
@@ -103,7 +189,12 @@ function latexTableToHtml(tex) {
     let colspan = attrs.colspan ?? 1;
     let rowspan = attrs.rowspan ?? 1;
     // \textbf / \textit
-    html = html.replace(/\\textbf\{([^{}]*)\}/g, '<b>$1</b>').replace(/\\textit\{([^{}]*)\}/g, '<i>$1</i>');
+    //
+    // 前面可能紧挨着 multicolumn/multirow 的占位符控制字符（\u0005 / \u0002），
+    // 那不是「命令名的一部分」。不加中括号限制时，`\u0005\textbf{Qwen3-4B}\u0006`
+    // 会被后面的通用剥命令规则变成 `\textbfQwen3-4B` —— 分组行的粗体整个丢失，
+    // 还把命令名原样印在表格里（2026-11-19 Domino 并发表实测）。
+    html = html.replace(/\\textbf\s*\{([^{}]*)\}/g, '<b>$1</b>').replace(/\\textit\s*\{([^{}]*)\}/g, '<i>$1</i>');
     // 行内数学先转占位，等整表拼好再统一渲染（否则 \\times 会被行切分拆坏）
     html = html.replace(/\$([^$]+)\$/g, (_m, m) => {
       MATH.push(m.trim() === '\\times' ? '×' : renderMath(m));
@@ -114,10 +205,32 @@ function latexTableToHtml(tex) {
     // 分组行（Math / Code / Chat 那行）只保留文字，列名在下一行；给分组单元格加 class
 
     // 间距与对齐命令（\, \; \quad \hspace 等）先去掉，否则会混进单元格文字
+    // 论文自定义的方法宏必须在通用「剥掉所有 \command{...}」之前替换掉，
+    // 否则 `\method~\tabsmall\secondarycolor{(16)}` 只剩 `(16)`，
+    // 表格里 Domino 那一行的名字整格空白（2026-11-19 Domino 实测）。
+    html = html.replace(/\\method\b/g, METHOD_NAME);
+    html = html.replace(/\\secondarycolor\s*\{([^{}]*)\}/g, '$1');
+    // \shortstack[a]{第一行\\第二行}：表头里用来把一个长列名拆成两行。
+    // 不处理的话三处表头（w/o last-write / refinement、Token CE、Embedding cosine）
+    // 全是空白单元格（2026-11-19 dspine 消融表实测）。
+    html = replaceBalancedCommand(html, 'shortstack', (args) => {
+      const inner = args[args.length - 1] ?? '';
+      return inner.split(/\\\\/).map((x) => x.trim()).filter(Boolean).join('<br>');
+    });
+    // \textcolor{color}{...}：保留内容并染成对应的灰绿色。
+    // 论文常用它把「相对基线的加速比」做成小字下标（`\textcolor{green!45!black}
+    // {\scriptsize\ensuremath{_{1.5\times}}}`）。原来这条没处理，会被通用
+    // 「剥命令」规则整段吃掉——并发表里加速比全消失，只剩绝对吞吐
+    // （2026-11-19 Domino 实测）。
+    // 只认 xcolor 的 `green!N!black` 写法，其它颜色退化成不染色、保留内容。
+    html = html.replace(/\\textcolor\s*\{([^{}]*)\}\s*\{([\s\S]*?)\}/g, (_m, col, inner) => {
+      const keep = /green/i.test(col);
+      return keep ? `<span class="ratio">${inner}</span>` : inner;
+    });
     html = html.replace(/\\[,;:!]|\\quad|\\qquad|\\hspace\*?\{[^}]*\}|\\vspace\*?\{[^}]*\}/g, ' ');
     html = html.replace(/\\rowcolor\{([^}]*)\}/g, '<span data-rowcolor="$1"></span>');
     // \textsc / \text / \mathrm 等「取参数内容」的命令必须在通用的 \[a-zA-Z]+{...} 之前处理
-    html = html.replace(/\\(?:textsc|text|textbf|textit|textrm|mathrm|mathbf|emph|mbox)\s*\{([^{}]*)\}/g, '$1');
+    html = html.replace(/\\(?:textsc|text|textbf|textit|textrm|mathrm|mathbf|emph|mbox|ensuremath)\s*\{([^{}]*)\}/g, '$1');
     // \rowcolor{name} 这类着色命令：保留一个标记，后面转成淡色底
     html = html.replace(/\\toprule|\\midrule|\\bottomrule|\\cmidrule(\([^)]*\))?\{[^}]*\}/g, '')
       .replace(/\\(?:small|footnotesize|scriptstyle|tabsmall)/g, '')
@@ -126,7 +239,7 @@ function latexTableToHtml(tex) {
       .replace(/\\(?:setlength|resizebox|centering)\b[^\\]*/g, '')
       .replace(/\\textsuperscript\{([^}]*)\}/g, '<sup>$1</sup>')
       .replace(/\\textsubscript\{([^}]*)\}/g, '<sub>$1</sub>')
-      .replace(/\\[a-zA-Z]+\{([^{}]*)\}/g, '$1')
+      .replace(/\\[a-zA-Z]+\s*\{([^{}]*)\}/g, '$1')
       .replace(/[{}]/g, '')
       .replace(/\s+/g, ' ').trim();
     const isEmpty = !html.trim();
@@ -134,6 +247,12 @@ function latexTableToHtml(tex) {
   };
 
   const rows = [];
+  // 记录「还占着列」的 rowspan 单元格：{col, remaining}。
+  // HTML 里 rowspan 覆盖的格子，后续行**不能再写 td**；但 LaTeX 源常常照写
+  // 空 cell（`& & 2 & & 4 …` 就是给 rowspan 的两列留了空位），多出来的 td 会把
+  // 整行推到列数溢出，浏览器直接不渲染那一行——表现是表头凭空消失、不报错
+  // （2026-11-19 Domino 并发表：12 列的表，第 2 行写了 12 个 td，实际只有 10 个位置）。
+  let carry = []; // 每个元素是该列被 rowspan 占用的剩余行数
   for (const line of lines) {
     // \multirow{2}[2]{*}{文本} → 记录 rowspan
     let text = line.replace(/\\multirow\{(\d+)\}(?:\[\d+\])?\{[^}]*\}\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}/g,
@@ -145,7 +264,20 @@ function latexTableToHtml(tex) {
     //   `\multicolumn{2}{c}{HumanEval} & \multicolumn{2}{c}{GSM8K}`
     // 会变成一个单元格、内容是 `HumanEval} & \multicolumn{2}{c}{GSM8K`，
     // 表格里就印出 `2 HumanEval`、`2cGSM8K` 这种残渣，而且列全错位。
-    text = text.replace(/\\multicolumn\{(\d+)\}\{[^}]*\}\{([\s\S]*?)\}/g, (m, n, inner) => `\u0004${n}\u0005${inner}\u0006`);
+    // 内层先展开一次「取参数」类命令，再塞进占位符。
+    // 否则 `\u0005\textbf{Qwen3-4B}\u0006` 里的 `\textbf{` 前面多了一个控制字符，
+    // cell() 里的粗体规则匹配不上，最后被通用剥命令规则变成 `\textbfQwen3-4B`
+    // —— 命令名原样印进表格、粗体丢失（2026-11-19 Domino 并发表实测）。
+    text = replaceBalancedCommand(text, 'multicolumn', (args, span) => {
+      const n = args[0];
+      // args[2] 是单元格内容：**先展开取参数类命令，再塞进占位符**。
+      // 否则 `\u0005\textbf{Qwen3-4B}\u0006` 里 `\textbf{` 前多了控制字符，
+      // cell() 的粗体规则匹配不上，最后被通用剥命令规则变成 `\textbfQwen3-4B`
+      // —— 命令名原样印进表格、粗体丢失。
+      const flat = args[2].replace(
+        /\\(?:textbf|textit|textsc|textrm|mathrm|mathbf|emph|mbox|text)\s*\{([^{}]*)\}/g, '$1');
+      return `\u0004${n}\u0005${flat}\u0006`;
+    });
     const parts = text.split('&');
     const tds = parts.map((part) => {
       let colspan = 1, rowspan = 1;
@@ -156,15 +288,40 @@ function latexTableToHtml(tex) {
       if (mr) { rowspan = Number(mr[1]); inner = mr[2]; }
       return cell(inner, { colspan, rowspan });
     });
-    const rowHtml = tds.join('');
+    // 跳过被上一行 rowspan 占住的列（对应该是空 cell）
+    let occupied = carry.reduce((n, r) => n + (r > 0 ? 1 : 0), 0);
+    let kept = tds;
+    if (occupied > 0) {
+      // 按顺序剔除前面 occupied 个「空」单元格
+      const out = [];
+      let need = occupied;
+      for (const td of tds) {
+        const isEmptyCell = /class="empty"/.test(td);
+        if (need > 0 && isEmptyCell) { need--; continue; }
+        out.push(td);
+      }
+      kept = out;
+    }
+    const rowHtml = kept.join('');
     // \rowcolor 在行首，会被切进第一个（空的）单元格；这里按标记判定并在清理时移除
     const isHl = rowHtml.includes('data-rowcolor=');
     const cleanTds = rowHtml.replace(/<span data-rowcolor="[^"]*"><\/span>/g, '');
     const attrs = [text.includes('\u0007') ? 'group' : '', isHl ? 'hl' : ''].filter(Boolean).join(' ');
-    if (tds.length) rows.push(`<tr${attrs ? ` class="${attrs}"` : ''}>${cleanTds.replace(/\u0007/g, '')}</tr>`);
+    if (kept.length) rows.push(`<tr${attrs ? ` class="${attrs}"` : ''}>${cleanTds.replace(/\u0007/g, '')}</tr>`);
+    // 更新 carry：本行新增的 rowspan 往后排，已有的减一
+    const nextCarry = [];
+    let ci = 0;
+    for (const td of kept) {
+      const m = td.match(/rowspan="(\d+)"/);
+      const span = m ? Number(m[1]) - 1 : 0;
+      nextCarry.push(span);
+      ci++;
+    }
+    // 加上被占住的列（它们在本行没有 td，但索引要占位）
+    carry = nextCarry;
   }
   const table = `<table>${rows.join('')}</table>`.replace(/@@M(\d+)@@/g, (_m, i) => MATH[Number(i)] ?? '');
-  return { caption: caption.replace(/\\method/g, 'DFlash').replace(/\$/g, ''), html: table };
+  return { caption: caption.replace(/\\method/g, METHOD_NAME).replace(/\\textsc\{([^}]*)\}/g, '$1').replace(/\$/g, ''), html: table };
 }
 
 const { caption, html } = latexTableToHtml(fs.readFileSync(String(args.tex), 'utf8'));
@@ -184,6 +341,7 @@ const page = `<!doctype html><html><head><meta charset="utf-8">
   tr:first-child td { border-bottom: 1px solid #444; }
   td[rowspan] { font-weight: 600; }
   tr.hl td { background: #fdf1e8; }
+  .ratio { color: #3f7d4e; font-size: 11px; }
 </style>
 <style>${katexFonts}</style>
 </head><body>${html}</body></html>`;
@@ -193,8 +351,23 @@ const browser = await chromium.launch({ headless: true, ...(findChromium() ? { e
 const p = await browser.newPage({ viewport: { width: 1600, height: 900 }, deviceScaleFactor: Number(args.dpi ?? 3) });
 await p.setContent(page, { waitUntil: 'load' });
 await p.waitForTimeout(500);
-const el = await p.$('table');
-await el.screenshot({ path: outPng });
+// 先按表格实际尺寸把视口撑开再截。
+// 宽表（Domino 并发表 12 列、约 5900 CSS px）远超默认 1600 视口，
+// `el.screenshot()` 只覆盖可见区域，**表头行会被整行切掉**且不报错
+// （2026-11-19 实测：渲染出来第一行直接是 Qwen3-4B 分组）。
+const box = await (await p.$('table')).boundingBox();
+await p.setViewportSize({ width: Math.ceil(box.width) + 40, height: Math.ceil(box.height) + 40 });
+await p.waitForTimeout(200);
+// 撑开视口后 `el.screenshot()` 仍可能只截到原布局高度里的一部分——
+// Playwright 在元素高度超过视口时会把图截断，而表头正好在最顶上时表现为
+// 「第一行凭空消失」。改成截 body 再裁到表格区域，配合 fullPage 兜住高度。
+const table = await p.$('table');
+const tb = await table.boundingBox();
+await p.screenshot({
+  path: outPng,
+  clip: { x: tb.x, y: tb.y, width: tb.width, height: tb.height },
+  captureBeyondViewport: true,
+});
 await browser.close();
 fs.writeFileSync(join(assetDir, `tab-${outName}.caption.txt`), `${caption}\n`);
 console.log(JSON.stringify({ png: `articles/${args.slug}/assets/tab-${outName}.png`, caption }, null, 1));

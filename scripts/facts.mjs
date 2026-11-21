@@ -23,7 +23,7 @@
  * `\multicolumn{n}{c}{}`、`\rowcolor{}`、`x\,$\pm$\,y`。
  */
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import process from 'node:process';
 
 const ROOT = process.cwd();
@@ -38,7 +38,14 @@ if (!args.slug) {
 const slug = String(args.slug);
 const outPath = join(ROOT, 'articles', slug, 'facts.json');
 
-/** 递归找所有 .tex */
+/**
+ * 递归找所有 .tex
+ *
+ * 返回值同时给出 `all`（盘上全部 .tex）与 `inlined`（每个文件展开了 \input 之后的文本）。
+ * 为什么要展开 \input：论文常把每张表拆成独立片段（`\input{results_table}` 放在
+ * `\begin{table}` 里），表格环境横跨两个文件。不展开时 `\begin{table}` 匹配不到
+ * `\end{table}`，整张表静默消失——数字「明明在论文里」却在校验时找不到出处。
+ */
 function texFiles(dir) {
   if (!existsSync(dir)) return [];
   const out = [];
@@ -49,6 +56,32 @@ function texFiles(dir) {
     else if (name.endsWith('.tex')) out.push(full);
   }
   return out;
+}
+
+/**
+ * 把一个 .tex 里的 `\input{name}` / `\include{name}` 就地展开（递归，带环保护）。
+ * 只展开能解析到同目录/子目录下同名 .tex 的引用；外部宏包等保持原样。
+ */
+function inlineInputs(file, seen = new Set()) {
+  if (seen.has(file)) return '';
+  seen.add(file);
+  const dir = dirname(file);
+  let text = readFileSync(file, 'utf8');
+  // 去掉注释再找 \input，避免被注释掉的片段被展开
+  text = text.replace(/\\input\{([^}]+)\}|\\include\{([^}]+)\}/g, (whole, a, b) => {
+    const name = String(a ?? b).trim();
+    // arXiv 的 e-print 解包会把子目录拍平：`sections/intro.tex` 变成
+    // `sections_intro.tex`。原样按 `sections/intro.tex` 找不到，整段 \input
+    // 就留在原地，里面的表也就跟丢了（REAL Loss 的 12 张表全部走这条路径，
+    // 第一次跑 facts 得到 0 张表）。所以再试一次把 `/` 换成 `_` 的扁平名。
+    const flat = name.replace(/\//g, '_');
+    for (const cand of [name, `${name}.tex`, flat, `${flat}.tex`]) {
+      const p = join(dir, cand);
+      if (existsSync(p)) return inlineInputs(p, seen);
+    }
+    return whole;
+  });
+  return text;
 }
 
 /**
@@ -78,6 +111,11 @@ const GREEK = {
  * `\newcommand{\hl}[1]{...}`）不处理——它们在 cleanCell 里另有规则。
  */
 const CUSTOM_MACROS = new Map();
+// 带参数的宏：name → { argc, body }。见 loadCustomMacros 里的说明。
+const ARG_MACROS = new Map();
+// 宏体里引用了带参宏的无参宏（`\dpalRenyi` → `\dpal{R\'enyi}`）：
+// 必须原样保留花括号，否则参数边界没了、带参宏展开不了。
+const RAW_MACROS = new Map();
 
 /** 从 `text[pos]` 处的 `{` 开始，返回配平的内部文本与结束位置。 */
 function braceBody(text, pos) {
@@ -115,18 +153,53 @@ function loadCustomMacros(dir) {
     .replace(/\\textbf\s*\{([^{}]*)\}/g, '$1')
     .replace(/\\textit\s*\{([^{}]*)\}/g, '$1')
     .replace(/\\mathrm\s*\{([^{}]*)\}/g, '$1')
+    // 其余「取参数」的字体命令也要先剥掉：`\newcommand{\real}{\textsc{REAL}}`
+    // 只处理 textbf/textit/mathrm 时，body 里的 `\textsc{REAL}` 会在下面去掉花括号后
+    // 变成 `\textscREAL`——宏展开后单元格里留着一个反斜杠命令，cleanCell 的
+    // 「\word{} 取参数」规则也匹配不到（花括号已经没了），末位变成 `\textscREAL`。
+    // REAL Loss 那张表因此有一行的行标签变成空串，`hasGroupColumn` 误判为真，
+    // 整张表的 `Method` 列被当成数值列——`4.740` 成了方法名。
+    .replace(/\\(?:textsc|textsf|texttt|textnormal|textup|textsl|textmd|textsuperscript|text|mathbf|mathit|mathsf|mathtt|boldsymbol)\s*\{([^{}]*)\}/g, '$1')
+    // `\&` 是**转义的 &**，在表格里是普通字符，不是列分隔符。
+    // strip 阶段不处理它，`\&` 就会被拆成 `\` + `&`：反斜杠留在方法名里，
+    // 而裸 `&` 会被 splitCells 当成列分隔符，整行右移一格
+    // （2026-11-18 realloss 的 `REAL w/o CE\` 就是这么来的）。
+    .replace(/\\&/g, '&')
     .replace(/[{}]/g, '')
     .trim();
   for (const file of texFiles(dir)) {
     const text = readFileSync(file, 'utf8').replace(/(?<!\\)%.*$/gm, ' ');
     for (const m of text.matchAll(/\\(?:newcommand|renewcommand|providecommand)\*?\s*\{\\([A-Za-z]+)\}/g)) {
-      // 跳过带参数的宏：`{\hl}[1]{...}`
       const after = text.slice(m.index + m[0].length);
-      if (/^\s*\[/.test(after)) continue;
+      // 带参数的宏：`\newcommand{\dpal}[1]{\mbox{\dpalname[#1]}}`。
+      // 以前整条跳过，于是 `\dpalRenyi` → `\dpal{Rényi}` 后没人展开，
+      // 方法名里留着反斜杠（`\dpalRényi`），既进 fact ID 又印到页面上。
+      // 这里把「宏体 + 参数个数」记成模板，expandMacros 照模板套参数展开。
+      const argc = after.match(/^\s*\[(\d)\]\s*(?:\[[^\]]*\])?\s*/);
+      if (argc) {
+        const rest = after.slice(argc[0].length);
+        const open = rest.indexOf('{');
+        if (open !== 0) continue;
+        const b = braceBody(rest, open);
+        if (b) ARG_MACROS.set(m[1], { argc: Number(argc[1]), body: b.body });
+        continue;
+      }
       const open = after.indexOf('{');
       if (open < 0 || /\S/.test(after.slice(0, open))) continue;
       const b = braceBody(after, open);
-      if (b) { const v = strip(b.body); if (v) CUSTOM_MACROS.set(m[1], v); }
+      if (b) {
+        // 宏体里如果含带参宏调用（`\dpalRenyi` → `\dpal{R\'enyi}`），
+        // 不能走 strip：strip 末尾会无条件剥掉所有花括号，`\dpal{R\'enyi}`
+        // 就变成 `\dpalR\'enyi`，参数边界消失，带参宏再也展开不了。
+        // 这种宏原样存进 ARG_DEPENDENT，交给 expandMacros 按原串替换。
+        const raw = b.body.trim();
+        if (new RegExp(`\\\\(${[...ARG_MACROS.keys()].join('|')})\\s*\\{`).test(raw)) {
+          RAW_MACROS.set(m[1], raw);
+        } else {
+          const v = strip(raw);
+          if (v) CUSTOM_MACROS.set(m[1], v);
+        }
+      }
     }
     for (const m of text.matchAll(/\\def\\([A-Za-z]+)\s*\{/g)) {
       const open = text.indexOf('{', m.index + m[0].length - 1);
@@ -134,11 +207,16 @@ function loadCustomMacros(dir) {
       if (b) { const v = strip(b.body); if (v) CUSTOM_MACROS.set(m[1], v); }
     }
   }
-  // 宏可能套宏（\method → \modelname → D-cut），展开两轮
+  // 宏可能套宏（\method → \modelname → D-cut），展开两轮。
+  // 同样必须带边界：`\dpalname` 和 `\dpal` 是两个不同的宏，裸 split 会把
+  // `\dpalname` 的前缀 `\dpal` 替换掉，`\dpal[#1]` 就永远合不成 `D-PAL[...]`。
   for (let round = 0; round < 2; round++) {
     for (const [k, v] of CUSTOM_MACROS) {
       let next = v;
-      for (const [k2, v2] of CUSTOM_MACROS) if (k2 !== k) next = next.split(`\\${k2}`).join(v2);
+      for (const [k2, v2] of CUSTOM_MACROS) {
+        if (k2 === k) continue;
+        next = next.replace(new RegExp(`\\\\${k2.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-zA-Z])`, 'g'), () => v2);
+      }
       CUSTOM_MACROS.set(k, next);
     }
   }
@@ -146,7 +224,42 @@ function loadCustomMacros(dir) {
 
 function expandMacros(s) {
   let out = String(s);
-  for (const [k, v] of CUSTOM_MACROS) out = out.split(`\\${k}`).join(v);
+  // 宏体里可能再引用别的宏：`\ealp` 定义为 `\real{} \text{w/o RB}`，而 `\real`
+  // 自己也定义了。单趟替换按 Map 的插入顺序跑，若 `\real` 排在前面，
+  // `\ealp` 展开出来的 `\real` 就再也不会被替换（REAL Loss 的行标签因此成了
+  // `real w/o RB`）。迭代到不动点（上限 5 轮防环）。
+  //
+  // ⚠️ 必须按**宏名边界**替换，不能用 `split('\\'+name).join(v)`：
+  // 论文里遍布单/双字母宏（本节 ealwtv 有 `\ro`、`\re`、`\ra`…共 417 个），
+  // 裸 split 会把 `\rotatebox` 的前缀 `\ro` 当成宏替换掉，剩下 `otatebox`。
+  // 于是 `\multirow{8}{*}{\rotatebox…}` 变成 `8*otatebox[origin=c]90Greedy`，
+  // 这个垃圾串一路进 fact ID 和站点上的「横向对比」表（2026-11-18 用户看到
+  // 的 `1-d_TV(p,q)`、`% 5*rotatebox…` 就是这条链的末端）。
+  // TeX 的宏名是「反斜杠 + 连续字母」，所以边界判据是「后面不跟字母」。
+  for (let pass = 0; pass < 5; pass += 1) {
+    let changed = false;
+    // 带参宏（`\dpal[1]{\mbox{\dpalname[#1]}}`）：先套参数展开成无参形式，
+    // 再交给下面的无参循环，这样 `\dpalRenyi` → `\dpal{Rényi}` → `D-PAL[Rényi]`。
+    for (const [k, { argc, body }] of ARG_MACROS) {
+      const re = new RegExp(`\\\\${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^{}]*)\\}`, 'g');
+      const next = out.replace(re, (_m, arg) => (argc > 1 ? body : body.split('#1').join(arg)));
+      if (next !== out) { out = next; changed = true; }
+    }
+    for (const [k, v] of CUSTOM_MACROS) {
+      const re = new RegExp(`\\\\${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-zA-Z])`, 'g');
+      const next = out.replace(re, () => v);
+      if (next !== out) { out = next; changed = true; }
+    }
+    // RAW_MACROS 存的是含带参调用的原串（`\dpal{R\'enyi}`），要排在
+    // 带参宏那一轮**之后**、无参那一轮**之前**，这样它展开出来的
+    // `\dpal{...}` 能在下一轮被 ARG_MACROS 接住。
+    for (const [k, v] of RAW_MACROS) {
+      const re = new RegExp(`\\\\${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-zA-Z])`, 'g');
+      const next = out.replace(re, () => v);
+      if (next !== out) { out = next; changed = true; }
+    }
+    if (!changed) break;
+  }
   return out;
 }
 
@@ -155,8 +268,21 @@ function cleanCell(raw) {
   let s = expandMacros(raw)
     .replace(/\\rowcolor\{[^}]*\}/g, '')
     .replace(/\\cellcolor\{[^}]*\}/g, '')
-    // \shortstack{None\\(DFlash)} —— 表头里用它换行写两行，要去掉换行合并成一句
-    .replace(/\\shortstack\{([\s\S]*?)\}(?=\s|&|\\|$)/g, (_, body) => body.replace(/\\\\/g, ' '))
+    // \shortstack{None\\(DFlash)} —— 表头里用它换行写两行，要去掉换行合并成一句。
+    // `\shortstack[l]{…}` 的对齐参数必须一起吃，否则整串掉进通用规则，
+    // 变成 `3*\shortstack[l]Qwen3-Coder-\\30B-A3B-Instruct`（dscout 的实际形态）。
+    .replace(/\\shortstack(?:\[[^\]]*\])?\{([\s\S]*?)\}(?=\s|&|\\|$)/g, (_, body) => body.replace(/\\\\/g, ' '))
+    // \textcolor{red}{4.503} —— 排名高亮。漏掉这一步，最后一个通用规则会把它拆成
+    // `red` + `{4.503}`，值变成 `red4.503`，按 `4.503` 精确匹配永远查不到。
+    .replace(/\\(?:textcolor|colorbox|cellcolor)\{[^{}]*\}/g, '')
+    // \rotatebox[origin=c]{90}{Greedy} —— 竖排表头，两个必选参数：角度和文字。
+    // 必须在 \multirow 之前剥掉，否则 `\multirow{8}{*}{\rotatebox…}` 里的 `{*}` 和
+    // 后面的花括号会互相咬住，分组名变成 `8*otatebox[origin=c]90Greedy`
+    // （2026-11-18 ealwtv 的 1004 条事实全挂这串垃圾，根因就是 `\rotate` 被
+    // 泛化规则吃掉、只剩 `otatebox`）。
+    .replace(/\\rotatebox(?:\[[^\]]*\])?\{[^{}]*\}\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}/g, '$1')
+    // `\makecell{...}` / `\thead{...}` 里也可能裹着 \\ 换行，按 shortstack 同样处理
+    .replace(/\\makecell\{([\s\S]*?)\}(?=\s|&|\\|$)/g, (_, body) => body.replace(/\\\\/g, ' '))
     .replace(/\\(textbf|textit|underline|emph|textsc|mathrm|text)\s*\{([^{}]*)\}/g, '$2')
     .replace(/\\\\(toprule|midrule|bottomrule|hline)\b/g, '')
     // 无参数的「高亮宏」：`\hl 4.15`、`\hlg 1.32\times`。
@@ -168,7 +294,14 @@ function cleanCell(raw) {
     // 这里直接把它们当空白删掉，剩下的 `4.15` 才是值。
     .replace(/\\(?:hlrow|hlg|hlb|hlr|hl|best|ours)/g, '')
     .replace(/\\cmidrule(\([^)]*\))?\{[^}]*\}/g, '')
-    .replace(/\\multicolumn\{(\d+)\}\{[^}]*\}\{([^{}]*)\}/g, '$2')
+    // \multicolumn 的第三个参数常带嵌套花括号：`{\textbf{Acceptance Length}}`。
+    // 用 `[^{}]*` 匹配不到，整串会掉进下面 `\\[a-zA-Z]+\{(...)\}` 的通用规则，
+    // 变成 `{c}{\textbf{Acceptance Length}}` 这种残渣，列名跟着坏掉
+    // （2026-11-18 ealwtv 的主结果表 bodyRows 变 0 就是这么来的）。
+    .replace(/\\multicolumn\{(\d+)\}\{[^{}]*\}\{(?:[^{}]|\{[^{}]*\})*\}/g, (m0, n) => {
+      const inner = m0.replace(/^\\multicolumn\{\d+\}\{[^{}]*\}\{/, '').replace(/\}$/, '');
+      return inner;
+    })
     // \multirow 有两种写法：{n}{width}{text} 和 {n}[fixup]{width}{text}。
     // 漏掉可选参数 `[2]` 会让整串落到下面的通用规则里，变成 `6[2]*T=0`——
     // EAGLE 那张分组表就是这么坏掉的（分组名本该是 `T=0`）。
@@ -176,9 +309,50 @@ function cleanCell(raw) {
     .replace(/\$?\\pm\$?/g, '±')
     .replace(/\\,/g, ' ')
     .replace(/\\&/g, '&')          // 表头里的「refinement \& injection」是转义的 &
+    // 纯排版命令：不承载内容，留着只会进 method / group 名。
+    // `\addlinespace[1.5pt]` 是行间距（dpal 的 grouped_results.tex 每段之间都有），
+    // `\Xhline`/`\specialrule` 同类；不删的话方法名会变成
+    // `\addlinespace[1.5pt] \dpalR'enyi`，站点上原样印出来。
+    .replace(/\\(?:addlinespace|specialrule|Xhline|Xcline|hhline|noalign)(?:\[[^\]]*\])?(?:\{[^{}]*\}){0,3}/g, ' ')
+    .replace(/\\arraystretch\s*/g, '')
+    // 字号/字体切换同样只是排版：`{\fontsize{6}{7}\selectfont Speedup}` 里
+    // 真正的内容只有 `Speedup`，`\fontsize{6}{7}` 和 `\selectfont` 都是外壳。
+    .replace(/\\fontsize\{[^{}]*\}\{[^{}]*\}/g, '')
+    .replace(/\\selectfont/g, '')
+    .replace(/\\(?:tiny|scriptsize|footnotesize|small|normalsize|large|Large|LARGE|huge|Huge|bfseries|itshape|ttfamily|sffamily|rmfamily)\b/g, '')
+    // 数学符号的文本化：`^\dagger` 是脚注标记，`\dagger` 出现在方法名里时
+    // 读者看到的是反斜杠（dscout 的 `PARD-2 (15)^\dagger`）。转成 Unicode。
+    .replace(/\^\s*\\dagger/g, '†')
+    .replace(/\\dagger/g, '†')
+    .replace(/\^\s*\\ddagger/g, '‡')
+    .replace(/\\ddagger/g, '‡')
+    // 数学定界符 `\(…\)` / `\[…\]` 只是「这里是行内公式」的标记，去掉定界符、
+    // 留住内容——angelspec 的分组名 `\(+\) AR head` 就是靠在加号两侧套定界符写的。
+    .replace(/\\\(|\\\)|\\\[|\\\]/g, '')
+    // TeX 重音转义：`R\'enyi` / `R\'{e}nyi` → `Rényi`。
+    // 不处理的话方法名里留着 `R\'enyi`，模型抄进正文和对比表时必然漏反斜杠，
+    // 显示成 `\dpalR\'enyi` 这种（2026-11-18 dpal 的 20 条事实）。
+    .replace(/\\(['`^"~=.])\{?([A-Za-z])\}?/g, (m, accent, ch) => {
+      const map = {
+        "'": { a: 'á', e: 'é', i: 'í', o: 'ó', u: 'ú', A: 'Á', E: 'É', I: 'Í', O: 'Ó', U: 'Ú', y: 'ý', c: 'ć', n: 'ń' },
+        '`': { a: 'à', e: 'è', i: 'ì', o: 'ò', u: 'ù' },
+        '^': { a: 'â', e: 'ê', i: 'î', o: 'ô', u: 'û' },
+        '"': { a: 'ä', e: 'ë', i: 'ï', o: 'ö', u: 'ü' },
+        '~': { a: 'ã', n: 'ñ', o: 'õ' },
+      };
+      return map[accent]?.[ch] ?? ch;
+    })
     // 列名里残留的 `\%`、`$$...$$` 会进 ID，模型复制时必然漏掉反斜杠——
     // ID 必须是「看一眼就能原样打出来」的字符串，否则校验全是假阳性。
     .replace(/\\%/g, '%')
+    // 带参数的自定义宏（如 `\dpal{R\'enyi}` → `D-PAL[Rényi]`）在宏加载阶段被跳过了，
+    // 到这里还留着反斜杠。按「取最后一个参数」降级成可读文本：
+    // `\dpal{X}` → `D-PAL[X]` 需要知道宏体，代价太大；退一步只留参数名，
+    // 至少不会让 `\dpalR\'enyi` 这种带反斜杠的串进 fact ID 和读者眼前。
+    .replace(/\\([a-zA-Z]+)\s*\{([^{}]*)\}/g, (_m, name, arg) => {
+      const slim = arg.replace(/\\([a-zA-Z]+)/g, (x, n) => GREEK[n] ?? n);
+      return name ? `${slim}` : slim;
+    })
     .replace(/\\([a-zA-Z]+)/g, (m, name) => GREEK[name] ?? m)
     .replace(/\\[a-zA-Z]+\{([^{}]*)\}/g, '$1')   // `\gamma` 这类要留，`\foo{x}` 取 x
     .replace(/\$/g, '')
@@ -230,6 +404,13 @@ function splitCells(row) {
   for (const ch of row) {
     if (ch === '{') depth += 1;
     if (ch === '}') depth -= 1;
+    // `\&` 是转义的 &：它是单元格里的普通字符，不是列分隔符。
+    // 不判这个的话 `\real{} w/o CE\&RB` 会被切成 `…CE\` 和 `RB`，
+    // 反斜杠留在方法名里、整行右移一格（2026-11-18 realloss 的 ce-ablation 表）。
+    if (ch === '&' && depth === 0 && cur.endsWith('\\')) {
+      cur = `${cur.slice(0, -1)}&`;
+      continue;
+    }
     if (ch === '&' && depth === 0) { cells.push(cur); cur = ''; continue; }
     cur += ch;
   }
@@ -270,6 +451,11 @@ function splitHeaderGroups(row) {
   for (const ch of row) {
     if (ch === '{') depth += 1;
     if (ch === '}') depth -= 1;
+    // 同 splitCells：`\&` 是转义的 &，不是列分隔符
+    if (ch === '&' && depth === 0 && cur.endsWith('\\')) {
+      cur = `${cur.slice(0, -1)}&`;
+      continue;
+    }
     if (ch === '&' && depth === 0) { cells.push(cur); cur = ''; continue; }
     cur += ch;
   }
@@ -318,6 +504,87 @@ function parseTabular(headerLines, bodyRows) {
   return { columns, width };
 }
 
+
+// 列格式外面的花括号里可能套两层：`{l c@{\hspace{4pt}} ccccccccc}` 的最外层
+// 包着 `{\hspace{4pt}}`，而后者自己又包着 `{4pt}`。只写一层 `\{[^{}]*\}` 时，
+// 最外层匹配失败，引擎从内层 `{` 重新起匹，于是 `l c@` 这段残留下来当成表头第一格，
+// 整张表右移一列、第一列（方法名）被当成数据——REAL Loss 主表就是这样把
+// `Method` 列读丢、让 `4.740` 变成方法名的。所以按层数写清楚。
+const _LV1 = String.raw`\{[^{}]*\}`;
+const _LV2 = String.raw`\{(?:[^{}]|` + _LV1 + String.raw`)*\}`;
+const TAB_SPEC = String.raw`\{(?:[^{}]|` + _LV2 + String.raw`)*\}`;
+// ⚠️ 正则里的 `\s` 只能写一次：用 String.raw 时再写成 `\\s` 就成了「字面反斜杠 + s」，
+// 整条正则永远匹配不上（曾经因此让所有表静默消失，facts 变成 0 张表）。
+const TABULAR_RE = new RegExp(String.raw`\\begin\{tabular\*?\}(?:` + TAB_SPEC + String.raw`)?(?:` + TAB_SPEC + String.raw`)?([\s\S]*?)\\end\{tabular\*?\}`, 'g');
+
+/**
+ * 从一个 LaTeX 片段里抽出所有 tabular，登记成 `tables` 条目。
+ *
+ * @param env      要扫描的文本（一个 table 环境整体，或一段裸 tabular 所在的原文）
+ * @param caption  表标题（裸 tabular 传空串）
+ * @param label    默认表名（裸 tabular 传合成名）
+ * @param relFile  源文件名，用于兜底命名
+ * @param forceLabel  true 时忽略片段里的 \label，一律用传入的 label
+ */
+function collectTabulars(tablesAcc, env, { caption, label, relFile, forceLabel = false }) {
+  let subIndex = 0;
+  let lastOwnLabel = null;
+  for (const t of env.matchAll(TABULAR_RE)) {
+    // 同一 table 环境里可能并排放两张**不同的**表（各带自己的 \label，如
+    // tab:smoothing + tab:targets）。表名必须取这张 tabular **之前**最近的 \label，
+    // 取环境里第一个 \label 会把后一张表也挂到前一张的名字上。
+    const before = env.slice(0, t.index);
+    const ownLabel = forceLabel
+      ? label
+      : ([...before.matchAll(/\\label\{([^}]+)\}/g)].at(-1)?.[1] ?? label);
+    // 把各种规则线都当分隔符，包括 \cmidrule —— 论文用它分隔同一个 table 里的
+    // 不同模型组（`Qwen3-8B` / `Qwen3-4B`）。漏掉它，两个模型组的行会被归到同一段，
+    // 组名只能从「第 0 列非空的那一行」往后生效，前面几行就丢了组名。
+    const raw = t[1]
+      .replace(/\\cmidrule(\([^)]*\))?\{[^}]*\}/g, '\n@@RULE@@\n')
+      .replace(/\\toprule|\\midrule|\\bottomrule|\\hline/g, '\n@@RULE@@\n');
+    // 规则线把表切成若干段。去掉空段（\toprule 前面、\bottomrule 后面都是空的），
+    // 剩下的：前面若干段是表头（可能双层），其余全部是数据。
+    const segments = raw.split('\n@@RULE@@\n').filter((s) => cleanCell(s) !== '');
+    if (segments.length < 2) continue;   // 只有表头没有数据
+    let start = 0;
+    const firstRow = splitRows(segments[0])[0] ?? '';
+    if (splitCells(firstRow).length <= 1 && !segments[0].includes('&')) start = 1;
+    if (segments.length - start < 2) continue;
+    // 表头：从 start 起，把所有「不含纯数值格」的段都算表头。
+    // 判据必须看拆完单元格后的整格，不能看「含不含数字」——基准名 `MATH-500`、
+    // `MT-Bench` 都含数字，用「含数字」会让第二行表头被当成数据，
+    // 列名就只剩 `Math` 而不是 `Math / GSM8K`。
+    const isNumericCell = (cell) => /^[+\-−]?\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?$/.test(cell.replace(/\s/g, ''));
+    const headerSegs = [];
+    let cursor = start;
+    while (cursor < segments.length) {
+      const rows = splitRows(segments[cursor]).filter((r) => cleanCell(r) !== '');
+      if (!rows.length) { cursor += 1; continue; }
+      const looksHeader = rows.every((r) => !splitCells(r).some(isNumericCell));
+      if (!looksHeader) break;
+      headerSegs.push(segments[cursor]);
+      cursor += 1;
+    }
+    if (!headerSegs.length) { headerSegs.push(segments[start]); cursor = start + 1; }
+    const headerRows = headerSegs.flatMap((seg) => splitRows(seg)).filter((r) => cleanCell(r) !== '');
+    const bodyRows = segments.slice(cursor).flatMap((seg) => splitRows(seg)).filter((r) => cleanCell(r) !== '');
+    // 分组：每条规则线之间的一段就是一组（`Qwen3-8B` / `Qwen3-4B` 各自一段）。
+    // 不能靠「第 0 列留空沿用上一行」——论文常把模型名写在这一组的中间某行，
+    // 那样前几行会拿到上一组的模型名，facts 的数字归属就全错了。
+    const bodyGroups = segments.slice(cursor)
+      .map((seg) => splitRows(seg).filter((r) => cleanCell(r) !== ''))
+      .filter((rows) => rows.length);
+    if (!bodyRows.length) continue;
+    const { columns } = parseTabular(headerRows.length ? headerRows : ['col1'], bodyRows);
+    // 只有「同一 env 里并排多张 tabular」才需要 #2 后缀；换了 label 就重新计数
+    if (ownLabel !== lastOwnLabel) { subIndex = 0; lastOwnLabel = ownLabel; }
+    subIndex += 1;
+    const tableLabel = subIndex > 1 ? `${ownLabel || relFile}#${subIndex}` : ownLabel;
+    tablesAcc.push({ file: relFile, caption, label: tableLabel, columns, bodyRows, bodyGroups });
+  }
+}
+
 const tables = [];
 const srcDir = String(args.src ?? '/tmp');
 if (!existsSync(srcDir)) {
@@ -326,76 +593,87 @@ if (!existsSync(srcDir)) {
   process.exit(1);
 }
 loadCustomMacros(srcDir);
+// 备份稿必须排除：e-print 里常带 main_backup.tex / main_old.tex，里面的表与正式稿
+// 同 label 但数值不同。两套都进来时，verify-numbers 会给出互相矛盾的候选格，
+// 稿子取哪个都可能「有出处」，反而查不出真错。
+const isBackup = (f) => /(?:^|[\\/])(?:main_)?(?:backup|bak|old|copy|v\d+)(?:[_-]|\.[^/]*$)/i.test(relative(srcDir, f));
+
 for (const file of texFiles(srcDir)) {
-  const text = readFileSync(file, 'utf8');
+  if (isBackup(file)) continue;
+  // 展开 \input：表格环境常常横跨 `\begin{table}`（主文件）与片段（\input 进来）
+  const text = inlineInputs(file);
   const relFile = relative(srcDir, file);
+  // 去掉 LaTeX 注释再找表格。作者常把旧版本整段注释掉（e-print 里留下三份
+  // 同 label 的 `% \begin{tabular}`），不剥注释会把废弃表也当有效数据，
+  // 于是同一个数字有多个互相矛盾的「出处」。
+  const textNoComment = text.replace(/(?<!\\)%.*$/gm, '');
   // 逐个 table 环境
-  for (const m of text.matchAll(/\\begin\{table\*?\}([\s\S]*?)\\end\{table\*?\}/g)) {
-    const env = m[1];
+  // 表格环境不止 table：wraptable（被文字环绕的窄表）、sidewaystable、longtable
+  // 都是正常表格。只认 `table` 会把整张表静默丢掉——D-PACE 的块大小扫描（tab:block-size）、
+  // 目标概率对照（tab:target）、训练耗时（tab:training-time）三张都是 wraptable，
+  // 结果「表里有、事实表里没有」，写稿引用这三个数字时 verify:numbers 全报无出处。
+  // ⚠️ 这里必须写 `\\begin`：正则字面量里的 `\b` 是**词边界**，
+  // `\begin\{` 会被解释成「词边界 + egin{」，永远匹配不到 `\begin{`。
+  // 2026-11-18 就是这么把 realloss 的表全丢了的（0 张表，且不报错）。
+  for (const m of textNoComment.matchAll(/\\begin\{(table\*?|wraptable\*?|sidewaystable\*?|longtable)\}([\s\S]*?)\\end\{\1\}/g)) {
+    const env = m[2];
     const caption = cleanCell(env.match(/\\caption\{([\s\S]*?)\}(?=\s*\\label|\s*\n)/)?.[1] ?? '');
     const label = env.match(/\\label\{([^}]+)\}/)?.[1] ?? '';
-    // 同一 label 下可能有多张 tabular（左右并排两个 minipage）：加 #2 #3 后缀区分
-    let subIndex = 0;
-    // 一个 table 里可能有多张 tabular（如左右并排两个 minipage，各一张表）
-    // 必须同时匹配 tabular / tabular* / tabularx —— 论文里 `\begin{tabular*}{\linewidth}{...}`
-    // 很常见，漏了这个模式会整张表消失，而且不报错。
-    for (const t of env.matchAll(/\\begin\{tabular\*?\}(?:\{[^}]*\})?(?:\{[^}]*\})?([\s\S]*?)\\end\{tabular\*?\}/g)) {
-      // 把各种规则线都当分隔符，包括 \cmidrule —— 论文用它分隔同一个 table 里的
-      // 不同模型组（`Qwen3-8B` / `Qwen3-4B`）。漏掉它，两个模型组的行会被归到同一段，
-      // 组名只能从「第 0 列非空的那一行」往后生效，前面几行就丢了组名（4.82 正确、
-      // 但 DFlash 那几行 group 为空，写稿时不知道是哪个模型的数）。
-      let raw = t[1]
-        .replace(/\\cmidrule(\([^)]*\))?\{[^}]*\}/g, '\n@@RULE@@\n')
-        .replace(/\\toprule|\\midrule|\\bottomrule|\\hline/g, '\n@@RULE@@\n');
-      // 规则线把表切成若干段。去掉空段（\toprule 前面、\bottomrule 后面都是空的），
-      // 剩下的：前两段是表头（可能是双层），其余全部是数据。
-      // 注意不能简单地「最后一段是数据」——\bottomrule 会产生一个尾随空段，
-      // 那样 body 永远是空的，整张表被静默丢掉。
-      const segments = raw.split('\n@@RULE@@\n').filter((s) => cleanCell(s) !== '');
-      if (segments.length < 2) continue;   // 只有表头没有数据
-      // 第一段可能是 tabular 列格式残留（如 `cl*{8}{c}@{}`，不含 `&`）。
-      // 判据：拆出来只有 1 格且不是表头样（含 & 的才是表头）。命中就跳过它。
-      let start = 0;
-      const firstRow = splitRows(segments[0])[0] ?? '';
-      if (splitCells(firstRow).length <= 1 && !segments[0].includes('&')) start = 1;
-      if (segments.length - start < 2) continue;
-      // 表头：从 start 起，把所有「不含数字」的段都算表头。
-      // `\cmidrule` 会把双层表头切成好几段（Math 组 / Code 组 / Chat 组各一段），
-      // 之前固定取 2 段，导致列名只剩 `Math` 而不是 `Math / GSM8K`。
-      //
-      // 判据必须用 **拆完单元格后的文本**，且判断的是「这一格是不是纯数值」，
-      // 不能是「含不含数字」——基准名 `MATH-500`、`MT-Bench` 都含数字，
-      // 用「含数字」会让第二行表头被当成数据，列名就只剩 `Math` 而不是 `Math / GSM8K`。
-      const isNumericCell = (cell) => /^[+\-−]?\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?$/.test(cell.replace(/\s/g, ''));
-      const headerSegs = [];
-      let cursor = start;
-      while (cursor < segments.length) {
-        const rows = splitRows(segments[cursor]).filter((r) => cleanCell(r) !== '');
-        if (!rows.length) { cursor += 1; continue; }
-        const looksHeader = rows.every((r) => !splitCells(r).some(isNumericCell));
-        if (!looksHeader) break;
-        headerSegs.push(segments[cursor]);
-        cursor += 1;
-      }
-      if (!headerSegs.length) { headerSegs.push(segments[start]); cursor = start + 1; }
-      const headerRows = headerSegs.flatMap((seg) => splitRows(seg)).filter((r) => cleanCell(r) !== '');
-      const bodyRows = segments.slice(cursor).flatMap((seg) => splitRows(seg)).filter((r) => cleanCell(r) !== '');
-      // 分组：每条规则线之间的一段就是一组（`Qwen3-8B` / `Qwen3-4B` 各自一段）。
-      // 不能靠「第 0 列留空沿用上一行」——论文常把模型名写在这一组的中间某行，
-      // 那样前几行会拿到上一组的模型名，facts 的数字归属就全错了。
-      const bodyGroups = segments.slice(cursor)
-        .map((seg) => splitRows(seg).filter((r) => cleanCell(r) !== ''))
-        .filter((rows) => rows.length);
-      if (!bodyRows.length) continue;
-      const { columns } = parseTabular(headerRows.length ? headerRows : ['col1'], bodyRows);
-      subIndex += 1;
-      const tableLabel = subIndex > 1 ? `${label || relFile}#${subIndex}` : label;
-      tables.push({ file: relFile, caption, label: tableLabel, columns, bodyRows, bodyGroups });
+    collectTabulars(tables, env, { caption, label, relFile });
+  }
+  // 第二遍：不在任何 table 环境里的裸 tabular。
+  // 论文常用 `\begin{center}\begin{tabular}...` 放一张小表（不写 caption、不写 label），
+  // 只扫 table 环境就会把它整张漏掉——BV Loss 附录 B.2 的两位置反例表
+  // （`BV E[tau] 1.73 / 1.79`）就是这样丢的。
+  {
+    const covered = [...textNoComment.matchAll(/\\begin\{(?:table\*?|wraptable\*?|sidewaystable\*?|longtable)\}[\s\S]*?\\end\{(?:table\*?|wraptable\*?|sidewaystable\*?|longtable)\}/g)]
+      .map((x) => [x.index, x.index + x[0].length]);
+    let inlineIdx = 0;
+    for (const t of textNoComment.matchAll(TABULAR_RE)) {
+      if (covered.some(([a, b]) => t.index >= a && t.index < b)) continue;
+      inlineIdx += 1;
+      const before = textNoComment.slice(0, t.index);
+      const label = [...before.matchAll(/\\label\{([^}]+)\}/g)].at(-1)?.[1] ?? `${relFile}#inline${inlineIdx}`;
+      collectTabulars(tables, textNoComment.slice(t.index, t.index + t[0].length), { caption: '', label, relFile, forceLabel: true });
     }
   }
 }
 
 // ---- 展开成事实条目 ----
+// 展开 \input 之后，同一张表可能被抓到两次：一次来自主文件（`\input` 已被内联），
+// 一次来自片段文件本身（它也在 texFiles 里）。按「label + 列名」去重，保留先出现的那份，
+// 否则事实条目翻倍，verify-numbers 会给出两套互相冲突的候选。
+//
+// 2026-11-18 补了**按内容**去重：表格片段文件（tables_xxx.tex）里往往只有一个裸
+// tabular，被 \input 进主文件后 label 是 `tab:xxx`，而它自己那趟扫描拿到的是
+// `tables_xxx.tex#inline1`——label 不同，只按 label 去重就漏了，REAL Loss 因此
+// 从 15 张表涨到 33 张，同一格的数字有两份来源，verify:numbers 的候选全是重复的。
+{
+  const seenTable = new Set();
+  // 有名表的内容指纹先收齐，再回头删无名副本。不能边扫边判：
+  // 无名副本（tables_xxx.tex#inline1）在文件顺序上常常**早于**有名表，
+  // 边扫边判会先收进副本、后到的有名表反而被判「label 不同」留下来，两张都在。
+  const namedContent = new Set();
+  for (const t of tables) {
+    if (!/#inline\d+$/.test(String(t.label ?? ''))) {
+      namedContent.add(`${(t.columns ?? []).join('|')}\n${(t.bodyRows ?? []).join('\n')}`);
+    }
+  }
+  for (let i = tables.length - 1; i >= 0; i -= 1) {
+    const t = tables[i];
+    const key = `${t.label}::${(t.columns ?? []).join('|')}`;
+    const content = `${(t.columns ?? []).join('|')}\n${(t.bodyRows ?? []).join('\n')}`;
+    const isInline = /#inline\d+$/.test(String(t.label ?? ''));
+    // 1) 同名同列：只留一份。
+    // 2) 裸 tabular 那趟产生的是「无名副本」：内容已被有名表登记过就丢掉。
+    if (seenTable.has(key) || (isInline && namedContent.has(content))) {
+      tables.splice(i, 1);
+      continue;
+    }
+    seenTable.add(key);
+  }
+}
+
 const facts = [];
 for (const table of tables) {
   const tableId = table.label || table.file.replace(/[^\w]+/g, '-');
@@ -428,7 +706,11 @@ for (const table of tables) {
   // 分组：按规则线分段，一段 = 一个模型组。
   // 段内某一行写了模型名（如 `Qwen3-8B`），整段都用它——包括写在段中间的那一行之前的行。
   const groupSegments = (table.bodyGroups?.length ? table.bodyGroups : [table.bodyRows])
-    .map((rows) => rows.map((r) => splitCells(r)).filter((c) => !c.every((x) => !x || /^[+\-=—]+$/.test(x))))
+    // 分组名同样要过 cleanCell：`\multirow{8}{*}{\rotatebox…{Greedy}}` 不洗就会
+    // 让分组名带着 LaTeX 残渣进 fact ID（`8*otatebox[origin=c]90Greedy`）。
+    // 以前这里直接用 splitCells 的原始输出，是 cleanCell 覆盖不到的一个口子。
+    .map((rows) => rows.map((r) => splitCells(r).map((c) => cleanCell(c)))
+      .filter((c) => !c.every((x) => !x || /^[+\-=—]+$/.test(x))))
     .filter((rows) => rows.length);
   const groupNames = groupSegments.map((rows) => {
     const col0 = [...new Set(rows.map((r) => r[0]).filter(Boolean))];
@@ -480,7 +762,15 @@ for (const table of tables) {
           column: colName,
           value,
           // 双值（T=0/T=1）拆开便于精确匹配
-          parts: value.includes('/') ? value.split('/').map((v) => v.trim()).filter(Boolean) : [value],
+          // 「4.428 (0.002)」这种「均值（标准差）」也要拆：整串当一个值的话，
+          // verify:numbers 按 `4.428` 查表永远查不到，一篇稿子几十个数被判无出处。
+          parts: (value.includes('/') ? value.split('/') : [value])
+            .flatMap((v) => {
+              const t = v.trim();
+              const m = t.match(/^([−+\-]?\d[\d,]*\.?\d*)\s*[(（]([^)）]+)[)）]$/);
+              return m ? [m[1].replace(/,/g, ''), ...m[2].split(/[\s,，]+/).filter((x) => /\d/.test(x))] : [t];
+            })
+            .filter(Boolean),
         });
       }
     }

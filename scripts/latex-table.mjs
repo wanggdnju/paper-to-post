@@ -520,9 +520,16 @@ function columnPaths(matrixRows, colCount) {
   return paths;
 }
 
-/** 「Temperature = 0」→ `0`（分节的显示值） */
+/** 「Temperature = 0」→ `0`（分节的显示值）
+ *  源里常写成 `$T{=}0$`（把等号也包进数学模式，避免间距），parseCell 会
+ *  原样留下 `T{=}0`——正则只认 `T = 0` 时匹配不到，页面上就是一列 `T{=}0`。 */
 function sectionValue(label) {
-  const v = String(label).replace(/^(?:Temperature|T)\s*=\s*/i, '').trim();
+  const v = String(label)
+    .replace(/[\u0001]/g, '')
+    .replace(/\{=\}/g, '=')
+    .replace(/\s+/g, ' ')
+    .replace(/^(?:Temperature|T)\s*=\s*/i, '')
+    .trim();
   return v || null;
 }
 
@@ -559,7 +566,11 @@ function toCompact(tex, { caption = '', hint = '', macros = {}, maxTasks = 3 } =
   const taskCols = [];
   for (let c = 0; c < colCount; c++) {
     const label = paths[c].filter((x) => !METRIC.test(x)).at(-1) ?? '';
-    (label === '' || IDENT.test(label) ? identCols : taskCols).push(c);
+    // 首列**永远**当标识列：行标签叫什么都有可能（`MTP Loss`、`Objective`、`Setting`…），
+    // 靠关键字列举必然漏。真正的数据列都在它右边，把它们分错才是灾难。
+    // 2026-11-19 bebop 的 `MTP Loss` 就是这样被当成任务列，导致拆表后
+    // 第二片整列行标签消失（只剩 75.1 / +0.2 这种没有主语的数字）。
+    (c === 0 || label === '' || IDENT.test(label) ? identCols : taskCols).push(c);
   }
   // 标识列必须是**连续的前缀**。中间夹着任务列说明分类错了，宁可退回截图。
   if (identCols.length && identCols.some((c, i) => c !== i)) {
@@ -592,7 +603,10 @@ function toCompact(tex, { caption = '', hint = '', macros = {}, maxTasks = 3 } =
   const hasSection = Boolean(currentSection) || bodyFull.some((r) => r.section);
   const sectionOf = (t) => String(t).replace(/^Temperature\s*=\s*|^T\s*=\s*/i, '').trim();
 
-  const identLabels = identCols.map((c) => paths[c].filter((x) => !SECTIONISH.test(x)).at(-1) ?? '');
+  // 标识列里的 `$T{=}0$` 归一成 `T=0`：`{=}` 是 LaTeX 里把等号包进数学模式的写法，
+  // 不处理就在页面上原样印出花括号（2026-11-19 specauf 实测）。
+  const tidyIdent = (s) => String(s ?? '').replace(/\{=\}/g, '=').replace(/[\u0001]/g, '').trim();
+  const identLabels = identCols.map((c) => tidyIdent(paths[c].filter((x) => !SECTIONISH.test(x)).at(-1) ?? ''));
   // 首列表头本来就空（`\multirow{6}{T=0}` 那种），用「温度」兜底，否则页面上是一格空白
   if (identLabels[0] === '' && bodyFull.some((r) => r.cells && /^T\s*=\s*\d/.test(r.cells[identCols[0]] ?? ''))) {
     identLabels[0] = '温度';
@@ -608,7 +622,7 @@ function toCompact(tex, { caption = '', hint = '', macros = {}, maxTasks = 3 } =
     for (const r of bodyFull) {
       if (r.section) { currentSection = sectionOf(r.section); continue; }
       const cells = (r.cells ?? []);
-      const identVals = identCols.map((c) => cells[c] ?? '');
+      const identVals = identCols.map((c) => tidyIdent(cells[c] ?? ''));
       // 整行都空（被上方 rowspan 完全覆盖）就跳过，否则会多出一排空行
       if (identVals.every((v) => !v) && chunk.every((t) => t.cols.every((c) => !cells[c]))) continue;
       body.push([

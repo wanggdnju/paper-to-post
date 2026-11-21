@@ -138,4 +138,5 @@ run('render:html', [join(ROOT, 'scripts/render-html.mjs'), `--in=${mdPath}`,
 run('render:zhihu', [join(ROOT, 'scripts/render-zhihu.mjs'), `--slug=${slug}`]);
 
 run('preview', [join(ROOT, 'scripts/preview.mjs'), `--slug=${slug}`]);
-console.log('下一步：三平台建草稿（wechat-publish / zhihu-fill / 小红书），然后你只看 preview 这一屏决定发不发。');
+console.log('下一步：建草稿 —— npm run render:wechat -- --slug=' + slug
+  + '（--upload 需要公众号凭据），或 npm run publish:platform -- --slug=' + slug + ' --to=<driver>。');

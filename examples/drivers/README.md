@@ -1,8 +1,8 @@
 # Browser-automation drivers (optional)
 
-Working Zhihu and Xiaohongshu drivers, built on [browser-skill](https://github.com/)\'s
-`bsk` CLI. **They are not part of the default pipeline** and are not installed
-automatically — they require a tool most users will not have.
+Working Zhihu and Xiaohongshu drivers, built on the `browser-skill` project's `bsk`
+CLI. **They are not part of the default pipeline** and are not installed automatically
+— they require a tool most users will not have.
 
 ## Why they live here rather than in `scripts/drivers/`
 

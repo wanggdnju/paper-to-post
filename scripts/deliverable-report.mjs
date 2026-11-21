@@ -88,7 +88,7 @@ if (exists(`dist/zhihu/${slug}.html`)) {
   collect('知乎', [
     zhihuDraft
       ? `草稿已进草稿箱（${zhihuDraft === '已建' ? '创作中心 → 内容管理 → 草稿箱' : `id \`${zhihuDraft}\``}）：打开后过一眼排版`
-      : `正文+图片+公式可以自动灌进编辑器：\`node .claude/skills/paper-publish/scripts/zhihu-fill.mjs <session> --slug=${slug}\`（标题、${imgN} 图、${tableN} 表、${formulaN} 个公式一次做完，不点发布）`,
+      : `正文+图片+公式可以灌进编辑器：把 examples/drivers/ 装到 drivers/ 后跑 \`npm run publish:platform -- --slug=${slug} --to=zhihu\`（标题、${imgN} 图、${tableN} 表、${formulaN} 个公式一次做完，不点发布）`,
     zhihuDraft ? '' : '重建已存在的草稿加 `--reset`',
     zhihuDraft ? '**重点看图注**：图片注释在 figcaption，不是图片下面的正文段落' : '',
     zhihuDraft ? '**重点看公式**：`data-eeimg` 必须是 `2`（行间、居中），不是 `1`（行内、左对齐）' : '',
@@ -120,7 +120,7 @@ const hasMetaLink = /https?:\/\//.test(articleHead);
 collect('公众号', [
   wechatDraft
     ? `草稿已进草稿箱（media_id \`${wechatDraft}\`）：mp.weixin.qq.com → 内容管理 → 草稿箱 → 预览`
-    : '还没建草稿：`node scripts/wechat-publish.mjs --slug=' + slug + '`',
+    : '还没建草稿：`npm run publish:platform -- --slug=' + slug + ' --to=wechat`（需要 .env 里的公众号凭据）',
   '预览时重点看：公式图片大小、表格在手机上的效果、图片能否点开放大',
   hasMetaLink
     ? '元信息块那排二维码：长按一枚试试能否识别（公众号正文外链天然不可点，只能靠扫码）'

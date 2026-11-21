@@ -21,6 +21,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import process from 'node:process';
 import { parseArticle } from './lib/frontmatter.mjs';
+import { candidateKeys, classesCompatible, valueKey } from './lib/number-units.mjs';
 
 const ROOT = process.cwd();
 const args = Object.fromEntries(process.argv.slice(2).map((a) => {
@@ -58,28 +59,17 @@ if (!existsSync(full)) {
 const body = readFileSync(full, 'utf8');
 
 // ---- 建立索引 ----
-/**
- * 值 → 出处列表（表格事实 + 正文数字）。
- *
- * 键带上单位类别：`1.93x` / `1.93×` / `1.93倍` 归成同一类，而 `4.22`（接受长度）
- * 与 `4.22x`（加速比）仍是两个键。不带单位类别会出两种错——写成 `×` 的加速比
- * 匹配不上表里的 `x`，全部降级成「派生值，需人工确认」，精确命中的信号就失效了；
- * 而如果干脆忽略单位，接受长度和加速比又会互相顶替。
- */
-const unitClass = (raw) => {
-  const s = String(raw);
-  if (/[×x倍]$/.test(s)) return 'x';
-  if (/%$/.test(s)) return '%';
-  return '';
-};
-const valueKey = (raw) => {
-  const s = String(raw).replace(/^[+−-]/, '');
-  const num = s.match(/\d+(?:\.\d+)?/)?.[0];
-  if (num === undefined) return s;
-  const cls = unitClass(s);
-  return cls ? `${num}|${cls}` : num;
-};
+// 键是 `数值|单位类别`（`1.93×` 与 `1.93x` 同类，`4.22` 与 `4.22x` 不同类）。
+// 判定规则和两条不对称的放宽都写在 lib/number-units.mjs 里，并有单元测试。
 const byValue = new Map();
+/** 取某次引用对应的出处：先同类，再退回「无单位」。 */
+function lookup(value, unit) {
+  for (const key of candidateKeys(value, unit)) {
+    const hits = byValue.get(key);
+    if (hits?.length) return hits;
+  }
+  return undefined;
+}
 /** 表 id → 该表的事实列表（算差值时只在同表内找） */
 const byTable = new Map();
 const index = (key, entry) => {
@@ -175,14 +165,13 @@ const unverified = [];
 function roundMatches(value, unit = '') {
   const decimals = (value.split('.')[1] ?? '').length;
   const target = Number(value);
-  // 只在同一单位类别内舍入：`4.2` 不该被「4.22x」满足，反之亦然。
-  const cls = unitClass(`${value}${unit}`);
   const out = [];
   for (const [key, entries] of byValue) {
     const core = String(key).match(/^\d+(?:\.\d+)?/)?.[0];
     if (core === undefined) continue;
     const keyCls = key.includes('|') ? key.split('|')[1] : '';
-    if (keyCls !== cls) continue;
+    // 同一单位类别才舍入；引用带单位时也接受无单位的事实格（裸 `23.33` ← 「23.3%」）。
+    if (!classesCompatible(unit, keyCls)) continue;
     const v = Number(core);
     if (!Number.isFinite(v)) continue;
     if (Number(v.toFixed(decimals)) === target) out.push(...entries.map((e) => ({ ...e, rawValue: key })));
@@ -191,7 +180,7 @@ function roundMatches(value, unit = '') {
 }
 
 for (const occ of occurrences) {
-  const hits = byValue.get(valueKey(`${occ.value}${occ.unit}`));
+  const hits = lookup(occ.value, occ.unit);
   if (hits?.length) {
     verified.push({ ...occ, from: hits[0] });
     continue;

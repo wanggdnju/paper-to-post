@@ -9,8 +9,8 @@
  *   - 「## 正文（…）」之前的内容（公式清单、用法说明）不输出；
  *   - 【公式N：说明】就地换成**行间公式**（`data-eeimg="2"`），由编辑器粘贴时直接落成公式卡；
  *   - 表格输出成 <table>，Draft.js 粘贴后会自动转成可编辑表格；
- *   - 【表N：…】**有 LaTeX 表源时渲染成紧凑 HTML 表**（按任务拆成几张窄表），
- *     没有表源才退回截图——知乎正文宽 ~690px，18 列的原表截图和文字都读不出来。
+ *   - 《表N》图片**一律贴原表截图**，不转紧凑 HTML 表（2026-11-19 起）；
+ *     行内 `$…$` 全部做成行内公式卡（`data-eeimg="1"`），表格单元格里用可读纯文本。
  *
  * 为什么公式现在直接写进 HTML，而不再留占位符让脚本点工具栏插入：
  *   工具栏那条路（选中占位符 → Backspace → Enter×2 → 点「公式」→ 敲 TeX → 确认）
@@ -64,7 +64,7 @@ const formulaTex = new Map(
 // 而素材是一个按文档顺序排的数组，所以先按同样规则给每张素材编号，再建映射。
 const articlePath = join(ROOT, 'articles', String(args.slug), 'article.md');
 const imageList = existsSync(articlePath)
-  ? [...readFileSync(articlePath, 'utf8').matchAll(/!\[([^\]]*)\]\((assets\/[^)\s]+)\)/g)]
+  ? [...readFileSync(articlePath, 'utf8').matchAll(/!\[(.*?)\]\((assets\/[^)\s]+)\)/g)]
     .map((m) => ({ alt: m[1], path: join('articles', String(args.slug), m[2]) }))
   : [];
 const imageByNumber = new Map();
@@ -139,37 +139,130 @@ const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, 
  * 会原样显示成带美元符号的 TeX 源码。行内公式往往有几十处（eagle 有 76 个 `$`），
  * 逐个插卡不现实；所以这里降级成纯文本，与公众号的做法一致。
  *
- * ⚠️ 不能简单去掉 `$` 了事：`T_{\mathrm{draft}}` 会变成 `T_draft`，
- * 读者看到的是下划线而不是下标。这里把常见写法真正转成 Unicode：
- *   \tau → τ、T_{\mathrm{draft}} → T_draft（知乎不支持下标的更细形式）
- * 转换不了的结构（分式、希腊字母下标组合）保留原样并**去掉美元符号**，
- * 至少不会在正文里出现 `$`。
+ * ⚠️ 不能简单去掉 `$` 和反斜杠了事。2026-11-17 用户拿 dspark 的线上页面指出
+ * 「很多不好理解的公式」，根因就是旧实现把命令名原样留下了：
+ *   `\tau=\sum_r\left(1+\sum_{j\le\ell_r}a_{r,j}\right)`
+ *   → `τ=sum_rleft(1+sum_jleell_ra_r,jright)`
+ * 读者看到的是一串英文命令拼接，比公式本身还难读。现在按结构转 Unicode：
+ *   Σ ∏ ∫ ∈ ≤ ≥ ≠ ≈ × · √ ℓ ℝ，`\left`/`\right` 直接丢，`\frac{a}{b}` → a/b，
+ *   下标能映射到 Unicode 就映射（x_1 → x₁），映射不了保留 `_{...}`。
+ * 仍然转不了的结构（矩阵、多层嵌套）会留下花括号，但不再出现命令名。
  */
 function texToPlain(tex) {
-  const SUB = { 0: '₀', 1: '₁', 2: '₂', 3: '₃', 4: '₄', 5: '₅', 6: '₆', 7: '₇', 8: '₈', 9: '₉' };
+  const SUB = {
+    0: '₀', 1: '₁', 2: '₂', 3: '₃', 4: '₄', 5: '₅', 6: '₆', 7: '₇', 8: '₈', 9: '₉',
+    a: 'ₐ', e: 'ₑ', h: 'ₕ', i: 'ᵢ', j: 'ⱼ', k: 'ₖ', l: 'ₗ', m: 'ₘ', n: 'ₙ',
+    o: 'ₒ', p: 'ₚ', r: 'ᵣ', s: 'ₛ', t: 'ₜ', u: 'ᵤ', v: 'ᵥ', x: 'ₓ',
+  };
+  const SUP = { 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹' };
   const GREEK = {
     tau: 'τ', alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ε', eta: 'η',
     theta: 'θ', lambda: 'λ', mu: 'μ', nu: 'ν', pi: 'π', rho: 'ρ', sigma: 'σ',
-    phi: 'φ', psi: 'ψ', omega: 'ω', Delta: 'Δ', Sigma: 'Σ', Omega: 'Ω',
+    phi: 'φ', psi: 'ψ', omega: 'ω', Delta: 'Δ', Sigma: 'Σ', Omega: 'Ω', Gamma: 'Γ',
+    Lambda: 'Λ', Theta: 'Θ', Pi: 'Π', Phi: 'Φ', Psi: 'Ψ', xi: 'ξ', zeta: 'ζ', kappa: 'κ',
+    ell: 'ℓ',
   };
+  // 运算符 / 关系符：必须在「去掉反斜杠」之前替换，否则会变成 sum、le 这类英文单词
+  const OPS = {
+    sum: 'Σ', prod: '∏', int: '∫', le: '≤', leq: '≤', ge: '≥', geq: '≥',
+    neq: '≠', approx: '≈', equiv: '≡', propto: '∝', in: '∈', notin: '∉',
+    subset: '⊂', subseteq: '⊆', cup: '∪', cap: '∩', to: '→', rightarrow: '→',
+    leftarrow: '←', cdot: '·', times: '×', pm: '±', mp: '∓', infty: '∞',
+    ldots: '…', dots: '…', cdots: '…', mid: '|', prime: '′', partial: '∂',
+    nabla: '∇', forall: '∀', exists: '∃', perp: '⊥', parallel: '∥',
+  };
+  const BLACKBOARD = { R: 'ℝ', N: 'ℕ', Z: 'ℤ', E: '𝔼', Q: 'ℚ', C: 'ℂ' };
+
   let out = tex;
-  // 先处理「整式只有一个符号」的最常见情况
+  // 整式只有一个希腊字母：最常见、也最容易漏（\tau 单独出现）
   const sym = out.match(/^\s*\\([a-zA-Z]+)\s*$/);
   if (sym && GREEK[sym[1]]) return GREEK[sym[1]];
-  // 取参数内容的命令
-  out = out.replace(/\\(?:mathrm|text|textrm|operatorname|mathbf|mathrm)\s*\{([^{}]*)\}/g, '$1');
-  // 带固定写法的符号必须**先**替换，否则会被下面「去反斜杠」那步变成 times/cdot
-  out = out.replace(/\\times/g, '×').replace(/\\cdot/g, '·')
-    .replace(/\\hat\s*\{([^{}]*)\}/g, '$1̂')   // \hat{p} → p̂
-    .replace(/\\bar\s*\{([^{}]*)\}/g, '$1̄');
-  // 其余命令只去掉反斜杠，保留名字（\min → min、\mathrm{x} → x 已在上一步处理）
-  out = out.replace(/\\([a-zA-Z]+)/g, (m, name) => GREEK[name] ?? name);
-  // 纯数字下标 → Unicode 下标（x_1 → x₁）；字母下标保留 _ 形式（知乎能看懂）
-  out = out.replace(/_\{?([0-9])\}?/g, (m, d) => SUB[d] ?? `_${d}`);
-  out = out.replace(/\^\{?([0-9])\}?/g, (m, d) => ({ 0: '⁰', 1: '¹', 2: '²', 3: '³' }[d] ?? `^${d}`));
-  // 剩下的花括号只是分组符号，去掉
-  out = out.replace(/[{}]/g, '');
+
+  // 1) 只影响排版、没有语义的命令
+  out = out.replace(/\\(?:left|right|big|Big|bigg|Bigg)\s*/g, '')
+    .replace(/\\[,;:!]/g, ' ')
+    .replace(/\\quad|\\qquad/g, ' ')
+    .replace(/\\(?:displaystyle|textstyle|limits|nolimits)/g, '');
+
+  // 2) 取内容、丢命令字面的包装
+  out = out.replace(/\\(?:mathrm|text|textrm|operatorname|mathbf|mathit|mathsf|texttt)\s*\{([^{}]*)\}/g, '$1')
+    .replace(/\\mathbb\s*\{([A-Z])\}/g, (m, c) => BLACKBOARD[c] ?? c)
+    .replace(/\\mathcal\s*\{([A-Z])\}/g, '$1')          // \mathcal{V} → V（花体字在手机上不一定有字形）
+    .replace(/\\hat\s*\{([^{}]*)\}/g, '$1̂')             // \hat{p} → p̂
+    .replace(/\\bar\s*\{([^{}]*)\}/g, '$1̄')
+    .replace(/\\tilde\s*\{([^{}]*)\}/g, '$1̃');
+
+  // 3) 分式：只处理一层，嵌套的留给 4) 去命令名（至少不会印出 frac）
+  out = out.replace(/\\[dt]?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, (m, a, b) =>
+    (/^[\w.]+$/.test(a) && /^[\w.]+$/.test(b) ? `${a}/${b}` : `(${a})/(${b})`));
+  // 4) 根号
+  out = out.replace(/\\sqrt\s*\{([^{}]*)\}/g, '√$1').replace(/\\sqrt\s*(\w)/g, '√$1');
+
+  // 5) 带固定写法的符号（先于「去反斜杠」）。
+  //    非字母命令先处理：`\|` 是范数双竖线，不处理会印成反斜杠加竖线。
+  out = out.replace(/\\\|/g, '‖').replace(/\\\\/g, ' ');
+  //    必须按「已知命令名最长优先」匹配，且要处理粘连：
+  //    `\tau\cdot\mathrm{SPS}` 在第 2 步去掉 `\mathrm{}` 后会变成 `\tau\cdotSPS`，
+  //    通用正则的 `\\([a-zA-Z]+)` 会把整段读成 `cdotSPS`，印出来是 `τcdotSPS(B)`
+  //    （2026-11-17 实测踩到）。所以这里先做最长前缀拆分。
+  const KNOWN = [...new Set([...Object.keys(GREEK), ...Object.keys(OPS)])].sort((a, b) => b.length - a.length);
+  const knownRe = new RegExp(`\\\\(${KNOWN.join('|')})(?![A-Za-z])`, 'g');
+  out = out.replace(knownRe, (m, name) => GREEK[name] ?? OPS[name]);
+  // 收掉数学符号两侧的空白：`τ= Σ_r(1+ Σ_{j ≤ ℓ_r}` 这种排法在中文里很松散，
+  // 统一压成 `τ=Σ_r(1+Σ_{j≤ℓ_r}`。空格只在「两个字母/数字之间」保留。
+  out = out.replace(/[ \t]*([=+\-·×≤≥∈∏Σ∝/|]|\\\|)[ \t]*/g, '$1')
+    .replace(/[ \t]*([()[\]{};,])[ \t]*/g, '$1');
+  // 其余命令：去掉反斜杠保留名字（\min → min 这类函数名读者能认）；
+  // 名字里若「已知符号 + 粘连字母」，按最长前缀拆开。
+  out = out.replace(/\\([a-zA-Z]+)/g, (m, name) => {
+    for (const k of KNOWN) {
+      if (name.length > k.length && name.startsWith(k)) return `${GREEK[k] ?? OPS[k]}${name.slice(k.length)}`;
+    }
+    return name;
+  });
+
+  // 6) 上下标：能映射成 Unicode 的就映射（x_1 → x₁、ℓ_r → ℓᵣ），
+  //    映射不了**保留花括号**（a_{r,j}）——去掉括号变成 `a_r,j` 反而看不懂。
+  //    先换成哨兵再统一去分组括号：直接写 `\}(?!...)` 那种判据会吃掉
+  //    `s_{k-1};W_1[...]` 里的闭括号（2026-11-17 实测）。
+  const holds = [];
+  const holdSub = (s) => `\u0001${holds.push(s) - 1}\u0001`;
+  out = out.replace(/_\{([^{}]*)\}/g, (m, s) => (s.length === 1 && SUB[s] ? SUB[s] : holdSub(`_{${s}}`)))
+    // 只把**数字**下标转成 Unicode：`x_1 → x₁`。
+    // 字母下标若也转（`W_o → Wₒ`），同一句里的 `W_g`/`W_c` 没有对应字形，
+    // 会出现「一个有下标、一个还是下划线」的混排，反而更乱（2026-11-17 实测）。
+    .replace(/_(\d)/g, (m, d) => SUB[d] ?? `_${d}`)
+    .replace(/\^\{([^{}]*)\}/g, (m, s) => (/^\d$/.test(s) ? SUP[s] : holdSub(`^{${s}}`)))
+    .replace(/\^([0-9])/g, (m, d) => SUP[d] ?? `^${d}`);
+
+  // 7) 剩下的花括号只是分组符号，去掉；再把上标/下标还原
+  out = out.replace(/[{}]/g, '').replace(/\u0001(\d+)\u0001/g, (m, i) => holds[Number(i)]);
   return out.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * 行内 `$...$` 一律做成知乎行内公式卡（`data-eeimg="1"`）。
+ *
+ * 2026-11-17 实测：把 `<span class="ztext-math" data-eeimg="1" data-tex="…">`
+ * 放进粘贴的 HTML，知乎会当场渲染成行内公式（MathJax，宽高正常），
+ * 与「手动插卡」效果一致，不必逐个点工具栏。
+ *
+ * 曾经只把「复杂式」做成卡片、简单符号降级成 Unicode 纯文本，理由是「别让正文被卡片切碎」。
+ * 用户明确否掉了这个折中（「还是有些不是公式的，你能不能全部改掉的」）：
+ * 同一段里一半是真公式、一半是 `B(x_{k-1},x_k)` 这种带下划线的纯文本，
+ * 读起来更乱。现在**没有例外**，所有行内公式都走卡片。
+ * texToPlain 只保留给 figcaption（图片注释框是纯文本输入框，塞不进公式卡）。
+ */
+function inlineMathSpan(tex) {
+  const t = tex.trim();
+  // 注意：tex 到这里**已经过 esc()**（inline() 先转义整段再匹配 `$…$`）。
+  // 再 esc 一次会变成 `x_{&amp;lt;k}`，粘进知乎后 data-tex 里是坏的 TeX。
+  //
+  // span 的文本内容放**可读纯文本**而不是 TeX 源码：知乎的公式卡在编辑器里
+  // 未获得焦点前会原样显示这部分内容（`FormulaCSR isEditable`），
+  // 放 TeX 就会出现满屏 `\mathcal{V}`（2026-11-18 实测截图）。渲染成功后
+  // MathJax 会把内容整体替换掉，所以这只影响「还没渲染」的那一瞬。
+  return `<span class="ztext-math" data-eeimg="1" data-tex="${t}">${esc(texToPlain(t))}</span>`;
 }
 
 const inline = (s) => {
@@ -180,7 +273,27 @@ const inline = (s) => {
   const hold = (html) => `\u0000${anchors.push(html) - 1}\u0000`;
   let out = esc(s)
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\$([^$\n]+)\$/g, (_m, tex) => esc(texToPlain(tex)))
+    .replace(/\$([^$\n]+)\$/g, (m, tex) => hold(inlineMathSpan(tex)))
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, (_m, text, url) => hold(`<a href="${url}">${text}</a>`))
+    .replace(/https?:\/\/[^\s<）)，。；]+/g, (url) => hold(`<a href="${url}">${url}</a>`));
+  return out.replace(/\u0000(\d+)\u0000/g, (_m, i) => anchors[Number(i)]);
+};
+
+/**
+ * 表格单元格专用：和 inline 一样处理加粗和链接，但**不产出公式卡**。
+ *
+ * 为什么必须另写一个：Draft.js 把 HTML 表格转成自己的表格块时，只保留纯文本，
+ * 单元格里的 `ztext-math` 整个节点被丢弃——卡片没了、内容留成裸 TeX。
+ * eagle3 的「三个版本的设计对照」表里两个格子带 `$l_{\text{fea}} + l_{\text{token}}$`，
+ * 粘完只剩 `l_{fea}+l_{token}` 这串源码，验收的卡片数也对不上（63 → 61）。
+ * 单元格里给可读纯文本（`l_feа+l_token` 这类），读者能看懂，也不会有残留。
+ */
+const tableCell = (s) => {
+  const anchors = [];
+  const hold = (html) => `\u0000${anchors.push(html) - 1}\u0000`;
+  let out = esc(s)
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\$([^$\n]+)\$/g, (_m, tex) => hold(esc(texToPlain(tex))))
     .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, (_m, text, url) => hold(`<a href="${url}">${text}</a>`))
     .replace(/https?:\/\/[^\s<）)，。；]+/g, (url) => hold(`<a href="${url}">${url}</a>`));
   return out.replace(/\u0000(\d+)\u0000/g, (_m, i) => anchors[Number(i)]);
@@ -246,27 +359,32 @@ const extras = loadExtras(ROOT, String(args.slug));
 const extrasDiagramRel = extras.diagram ? relative(ROOT, extras.diagram.png) : '';
 if (extrasDiagramRel) await shrinkAll([extrasDiagramRel]);
 
-// 先把「哪几张表能渲染成紧凑表」算出来。能渲染的：
-//   ① 图片块直接用紧凑表替换（不贴截图）；
-//   ② 紧跟其后的「…切片…」说明段落 + 手抄切片表一并删掉——同一份数字出现两遍，
-//      手抄表还容易和原表对不上。
-const articleDir = join(ROOT, 'articles', String(args.slug));
-for (const b of blocks) {
-  if (b.type !== 'image' || b.kind !== '表') continue;
-  const compact = compactForTable(articleDir, b.n, b.caption);
-  if (!compact) continue;
-  if (compact.problems.length) {
-    console.warn(`⚠️ 表 ${b.n} 的 LaTeX 表源解析不干净（${compact.problems.join('；')}），退回截图`);
-    continue;
+// 数据表一律贴截图（2026-11-19 起）。下面的紧凑表替换默认不执行，由 TABLES_AS_IMAGES 控制。
+//
+// 之前会把有 LaTeX 表源的「表 N」自动换成 HTML 窄表，理由是「截图在手机上读不了」。
+// 但窄表的代价更大：主表被拆成（1/2）（2/2）几张、相邻两列并成 `5.15× / 6.53`，
+// 读者没法回论文原表逐格核对。截图是论文排版的最终结果，放大就能看。
+// 保留开关而不是删代码：真需要窄表时改一个常量就能回来。
+const TABLES_AS_IMAGES = true;
+if (!TABLES_AS_IMAGES) {
+  const articleDir = join(ROOT, 'articles', String(args.slug));
+  for (const b of blocks) {
+    if (b.type !== 'image' || b.kind !== '表') continue;
+    const compact = compactForTable(articleDir, b.n, b.caption);
+    if (!compact) continue;
+    if (compact.problems.length) {
+      console.warn(`⚠️ 表 ${b.n} 的 LaTeX 表源解析不干净（${compact.problems.join('；')}），退回截图`);
+      continue;
+    }
+    if (compact.tables.length) b.compact = compact;
   }
-  if (compact.tables.length) b.compact = compact;
-}
-for (let i = 0; i < blocks.length; i++) {
-  if (!blocks[i].compact) continue;
-  // 跳过可能存在的「…切片…」说明段，再删掉紧随的表
-  let j = i + 1;
-  if (blocks[j]?.type === 'text' && /切片/.test(blocks[j].text)) j++;
-  if (blocks[j]?.type === 'table') blocks.splice(j, 1);
+  for (let i = 0; i < blocks.length; i++) {
+    if (!blocks[i].compact) continue;
+    // 跳过可能存在的「…切片…」说明段，再删掉紧随的表
+    let j = i + 1;
+    if (blocks[j]?.type === 'text' && /切片/.test(blocks[j].text)) j++;
+    if (blocks[j]?.type === 'table') blocks.splice(j, 1);
+  }
 }
 
 const html = blocks.map((b) => {
@@ -326,8 +444,12 @@ const html = blocks.map((b) => {
   if (b.type === 'table') {
     const rows = b.rows.map((r) => r.replace(/^\||\|$/g, '').split('|').map((c) => c.trim()));
     const [head, ...rest] = rows;
-    return `<table><thead><tr>${head.map((c) => `<th>${inline(c)}</th>`).join('')}</tr></thead><tbody>${rest
-      .map((r) => `<tr>${r.map((c) => `<td>${inline(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+    // 单元格用 tableCell 而不是 inline：Draft.js 粘贴表格时会把单元格里的
+    // `ztext-math` 节点整块压平——卡片消失、只留下它的纯文本内容。
+    // 结果就是卡片数对不上（eagle3 实测 63 → 61），而且剩下的 TeX 源码
+    // 会原样印在表里。单元格里用 texToPlain 的可读文本，段落里仍然是卡片。
+    return `<table><thead><tr>${head.map((c) => `<th>${tableCell(c)}</th>`).join('')}</tr></thead><tbody>${rest
+      .map((r) => `<tr>${r.map((c) => `<td>${tableCell(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
   }
   return '';
 }).join('\n');
@@ -340,7 +462,16 @@ const extrasDiagramTag = extras.diagram && extrasDiagramRel
   )}"></p>`
   : '';
 const extrasHtml = extrasDiagramTag || extras.compare
-  ? renderExtrasNarrow(extras, { imgTag: extrasDiagramTag, small: 13 })
+  // format: inline 让 compare.json 里的 `$B_k$`、`$c_k^*$` 也落成行内公式卡；
+  // 不传的话它们会以纯文本印出（模型写 ours/values 时保留了 TeX 记号）。
+  //
+  // plainFormat 是给**表格单元格**用的：Draft.js 粘贴表格时会把单元格里的
+  // `ztext-math` 节点压平，公式卡全变成它的纯文本内容（2026-11-18 实测 155 个
+  // 公式卡粘完只剩 153）。表格里改用 texToPlain 的可读文本，段落里仍然是卡片。
+  ? renderExtrasNarrow(extras, {
+    imgTag: extrasDiagramTag, small: 13, format: inline, matrixTable: true, articleMd: source,
+    plainFormat: (s) => esc(String(s ?? '')).replace(/\$([^$\n]+)\$/g, (_m, tex) => esc(texToPlain(tex))),
+  })
   : '';
 // 「附：问答」是附录，留在最后；横向对比是正文内容，插在它前面。
 const htmlWithExtras = extrasHtml

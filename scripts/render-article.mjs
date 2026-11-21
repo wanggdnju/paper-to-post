@@ -20,9 +20,13 @@ import { dirname, join } from 'node:path';
 import process from 'node:process';
 import katex from 'katex';
 import { marked } from 'marked';
+import { envGet } from './lib/env.mjs';
 import { loadExtras, renderExtrasMarkdown } from './lib/paper-extras.mjs';
 
 const ROOT = process.cwd();
+// 页眉/页码里的品牌名。默认取仓库名，可用 .env 的 SITE_NAME 换成自己的栏目。
+const BRAND = envGet('SITE_NAME', ROOT) || 'Paper to Post';
+const BRAND_UPPER = BRAND.toUpperCase();
 const args = Object.fromEntries(process.argv.slice(2).map((arg) => {
   const [key, ...rest] = arg.replace(/^--/, '').split('=');
   return [key, rest.join('=')];
@@ -50,7 +54,7 @@ if (missingCover.length) {
   console.error('  封面数字必须来自本篇论文，脚本不再提供跨论文默认值。');
   process.exit(1);
 }
-// kicker 是封面/页眉那行「LLM ATLAS · 论文解读」的后半句。教程类文章不该被叫「论文解读」，
+// kicker 是封面/页眉那行「<品牌> · 论文解读」的后半句。教程类文章不该被叫「论文解读」，
 // 所以允许用 --kicker 覆盖；默认保持原样，历史文章一个字都不变。
 const cover = { big: args.big, title: args.cover ?? title, num: args.num, unit: args.unit, vs: args.vs, hook: args.hook ?? '', cards, id: args.id ?? '', venue: args.venue ?? '', kicker: args.kicker ?? '论文解读' };
 mkdirSync(outDir, { recursive: true });
@@ -97,9 +101,10 @@ html, body { margin: 0; background: #f4f1ea; }
 .slide blockquote { margin: 0 0 14px; padding: 10px 14px; border-left: 4px solid #d9633b; background: #ebe5d7; border-radius: 0 8px 8px 0; font-size: 12px; line-height: 1.66; }
 .slide ul, .slide ol { margin: 0 0 12px; padding-left: 1.15em; }
 .slide li { margin-bottom: 4px; }
-/* 宽表在手机上一个屏幕放不下：整表缩小字号，必要时整页缩放 */
-.slide table { width: 100%; max-width: 100%; table-layout: fixed; border-collapse: collapse; margin: 0 0 12px; font-size: 8px; line-height: 1.32; }
-.slide th, .slide td { border: 1px solid #d8d1c2; padding: 4px 3px; text-align: center; word-break: break-word; }
+/* 表格：长表会被拆成每片 ≤5 行（见 SPLIT_ROWS），所以单片不高，字号可以到 12px。
+   2026-11-18 之前是 8px + 整表一屏，手机上是一团灰点，读不了。 */
+.slide table { width: 100%; max-width: 100%; table-layout: fixed; border-collapse: collapse; margin: 0 0 12px; font-size: 12px; line-height: 1.45; }
+.slide th, .slide td { border: 1px solid #d8d1c2; padding: 7px 5px; text-align: center; word-break: break-word; }
 .slide th:first-child, .slide td:first-child { text-align: left; }
 .slide td strong { background: none; }
 .slide th { background: #1f1d1a; color: #f4f1ea; }
@@ -309,7 +314,7 @@ async function renderCover() {
   // 内容只用 .textContent 写入，避免标题里的 < > & 破坏 HTML
   const coverHtml = `<div class="cover">
     <div class="cover-body">
-      <div class="eyebrow">LLM ATLAS · <span data-v="kicker"></span></div>
+      <div class="eyebrow">${BRAND_UPPER} · <span data-v="kicker"></span></div>
       <div class="big" data-v="big"></div>
       <div class="title" data-v="title"></div>
       ${cover.hook ? '<div class="hook" data-v="hook"></div>' : ''}
@@ -425,7 +430,11 @@ async function renderSlides(markdown, limit) {
   // 图片路径是相对稿子所在目录的（assets/xxx.png），setContent 的页面没有基准目录，
   // 必须先解析成绝对路径再交给本地静态服务（/file/ 前缀）。
   const baseDir = args.in ? dirname(args.in) : join(ROOT, 'articles', slug);
-  const resolved = markdown.replace(/(!\[[^\]]*\]\()([^)\s]+)(\))/g, (_m, a, src, c) => {
+  // alt 里可以出现方括号（`![图 2 · …[A, T1, MASK×6] 上并行…](assets/x.png)`），
+  // 用 `[^\]]*` 匹配 alt 会在第一个 `]` 就断开，整个替换静默失效、图保持相对路径，
+  // 最后在 about:blank 页面里 404（2026-11-21 dmtp architecture.png 实测）。
+  // 改成非贪婪 `.*?` 再要求紧跟 `](`，才能跨过 alt 内部的方括号。
+  const resolved = markdown.replace(/(!\[.*?\]\()([^)\s]+)(\))/g, (_m, a, src, c) => {
     if (/^(https?:|data:)/.test(src)) return `${a}${src}${c}`;
     return `${a}${assetBase}/file/${join(baseDir, src)}${c}`;
   });
@@ -504,6 +513,44 @@ async function renderSlides(markdown, limit) {
     }
   });
 
+  // 大表格拆成几张分表：一屏塞 12 行只能压到 8px 字号，手机上根本读不了。
+  // 2026-11-18 实测 dspark 的主结果表就是这样——整张 10 行表挤在一屏、
+  // 字号 8px，用户在小红书里看到的是一团灰点。
+  // 做法：行数超过 SPLIT_ROWS 的表拆成每片 ≤SPLIT_ROWS 行，每片都带原表头
+  // （读者在任何一片上都能独立看懂），并给每片加「（1/3）」这种序号。
+  // 每片 3 行：5 行 + 表头 + 节标题就超过 520px 可用高度，第二片会被裁掉一行。
+  // 2026-11-18 实测 5 行时 Alpaca / Arena-Hard 整行消失。
+  const SPLIT_ROWS = 3;
+  await view.evaluate((limit) => {
+    const root = document.getElementById('root');
+    for (const table of Array.from(root.querySelectorAll('table'))) {
+      const headRow = table.querySelector('thead tr') ?? table.querySelector('tr');
+      const bodyRows = Array.from(table.querySelectorAll('tbody tr'));
+      if (!headRow || bodyRows.length <= limit) continue;
+      const headHtml = headRow.outerHTML;
+      const chunks = [];
+      for (let i = 0; i < bodyRows.length; i += limit) chunks.push(bodyRows.slice(i, i + limit));
+      const frag = document.createDocumentFragment();
+      chunks.forEach((rows, ci) => {
+        const t = document.createElement('table');
+        // 用 innerHTML 塞 <thead>/<tbody>：浏览器会规范化，但不会丢节点。
+        t.innerHTML = `<thead>${headHtml}</thead><tbody>${rows.map((r) => r.outerHTML).join('')}</tbody>`;
+        if (!t.querySelector('thead th')) console.warn('⚠️ 拆表时表头丢了');
+        frag.appendChild(t);
+        if (ci < chunks.length - 1) {
+          const brk = document.createElement('div');
+          brk.className = 'table-break';
+          frag.appendChild(brk);
+        }
+      });
+      table.replaceWith(frag);
+    }
+    // 拆出来的表格之间插一个必须分页的标记块
+    for (const t of Array.from(root.querySelectorAll('table'))) {
+      t.classList.add('table-chunk');
+    }
+  }, SPLIT_ROWS);
+
   // 所有块的 HTML 一次性取出来，分页在真实页面里逐块实测完成（见下方 renderPage）
   const kidsHtml = await view.evaluate(() => Array.from(document.getElementById('root').children)
     .filter((n) => n.offsetHeight > 0).map((n) => n.outerHTML));
@@ -513,17 +560,18 @@ async function renderSlides(markdown, limit) {
   // 不再预估高度——图片加载、字体度量、浏览器节流都会让预估失真，实测是唯一可靠的。
   // 把一页的块装进真实画布并测量占用高度
   const buildPage = async (rows, no, total) => {
-    await view.evaluate(({ html, no, total, venue, kicker }) => {
+    // 品牌名必须作为参数传进去：这个回调在浏览器里执行，拿不到 Node 侧的常量。
+    await view.evaluate(({ html, no, total, venue, kicker, brand, brandUpper }) => {
       document.body.innerHTML = `<article class="slide">
-        <div class="banner"><span>LLM ATLAS · ${kicker}</span><span>${venue}</span></div>
+        <div class="banner"><span>${brandUpper} · ${kicker}</span><span>${venue}</span></div>
         <div class="slide-body">${html}</div>
-        <div class="page-no"><span>${no} / ${String(total).padStart(2, '0')}</span><span>关注 Paper to Post</span></div>
+        <div class="page-no"><span>${no} / ${String(total).padStart(2, '0')}</span><span>关注 ${brand}</span></div>
       </article>`;
       const slide = document.querySelector('article.slide');
       slide.style.minHeight = '520px';
       slide.style.height = '520px';
       slide.style.overflow = 'hidden';
-    }, { html: rows.join('\n'), no, total, venue: cover.venue ?? '', kicker: cover.kicker });
+    }, { html: rows.join('\n'), no, total, venue: cover.venue ?? '', kicker: cover.kicker, brand: BRAND, brandUpper: BRAND_UPPER });
     await view.evaluate(() => Promise.all(Array.from(document.images).map((i) => (i.complete ? 0 : new Promise((r) => { i.onload = i.onerror = r; })))));
     return view.evaluate(() => {
       const slide = document.querySelector('article.slide');
@@ -559,12 +607,14 @@ async function renderSlides(markdown, limit) {
     for (const src of failedImages.slice(0, 8)) console.error(`    · ${src}`);
     process.exitCode = 1;
     await view.close?.();
-    return;
+    // 必须返回同构的空结果：调用方无条件读 `slides.files`，
+    // 返回 undefined 会让「一张图失败」升级成整个渲染进程 TypeError（2026-11-21 实测）。
+    return { files: [], labels: [] };
   }
-  const metrics = await view.evaluate(({ htmlList }) => {
+  const metrics = await view.evaluate(({ htmlList, brandUpper }) => {
     // 测量期间把当前文档换成和最终页面完全同构的 slide 结构
     document.body.innerHTML = `<article class="slide">
-      <div class="banner"><span>LLM ATLAS · 论文解读</span><span></span></div>
+      <div class="banner"><span>${brandUpper} · 论文解读</span><span></span></div>
       <div class="slide-body"></div>
       <div class="page-no"><span></span><span></span></div>
     </article>`;
@@ -583,7 +633,7 @@ async function renderSlides(markdown, limit) {
       avail,
       heights: Array.from(body.children).map((n) => Math.round(n.getBoundingClientRect().height + (parseFloat(getComputedStyle(n).marginBottom) || 0))),
     };
-  }, { htmlList: kidsHtml });
+  }, { htmlList: kidsHtml, brandUpper: BRAND_UPPER });
   const AVAIL = metrics.avail;
   const heights = metrics.heights;
   const isHeading = (html) => /^\s*<h[123]/i.test(html);
@@ -593,6 +643,10 @@ async function renderSlides(markdown, limit) {
   // 不合并的话，页尾会只剩表标题、表格翻到下一页（2026-11-12 代码审查发现）。
   const isTableTitle = (html) => /^\s*<p[^>]*>\s*(<[^>]+>\s*)*表\s*\d+\s*·/.test(html);
   const isTable = (html) => /^\s*<table/i.test(html);
+  const isList = (html) => /^\s*<(ul|ol)[\s>]/i.test(html);
+  // 「引出句」：整段文字以冒号收尾（去掉内联标签后判断），后面通常就是它要引的东西。
+  const isColonIntro = (html) => /^\s*<p[\s>]/i.test(html)
+    && /[：:]\s*<\/p>\s*$/i.test(html);
 
   // ---- 先合并「不可拆单元」：图 + 紧跟的图注算**一个**单元 ----
   //
@@ -606,6 +660,18 @@ async function renderSlides(markdown, limit) {
       units.push({ from: i, to: i + 2, height: (heights[i] ?? 0) + (heights[i + 1] ?? 0) });
       i++;
     } else if (isTableTitle(kidsHtml[i]) && i + 1 < kidsHtml.length && isTable(kidsHtml[i + 1])) {
+      units.push({ from: i, to: i + 2, height: (heights[i] ?? 0) + (heights[i + 1] ?? 0) });
+      i++;
+    } else if (isHeading(kidsHtml[i]) && i + 1 < kidsHtml.length && isTable(kidsHtml[i + 1])) {
+      // 节标题 + 紧跟的表格算一个单元。
+      // 2026-11-18 之前它们分开装：表格拆成多片后，标题被装进上一页的剩余空间，
+      // 下一屏直接从表格中段开始，读者看到一张没有标题、也没有表头的表（dspark 实测）。
+      // 只绑**第一片**，后续片自己成页——绑全部会让整节超过缩放能救的范围。
+      units.push({ from: i, to: i + 2, height: (heights[i] ?? 0) + (heights[i + 1] ?? 0) });
+      i++;
+    } else if (isColonIntro(kidsHtml[i]) && i + 1 < kidsHtml.length && isList(kidsHtml[i + 1])) {
+      // 冒号引子 + 紧跟的列表算一个单元：「作者自己交代的几处，值得记：」被切到页尾、
+      // 列表翻到下一页，读者看到的是半句话（2026-11-21 dmtp 第 11 节实测）。
       units.push({ from: i, to: i + 2, height: (heights[i] ?? 0) + (heights[i + 1] ?? 0) });
       i++;
     } else {
@@ -631,12 +697,16 @@ async function renderSlides(markdown, limit) {
       }
       if (end === u) end = u + 1;
 
-      // 标题不能落在页尾
-      while (end - u > 1 && isHeading(kidsHtml[units[end - 1].from])) end--;
+      // 标题不能落在页尾——但只在「这个单元只有一个块」时算。
+      // 合并单元（标题 + 紧跟的表/图）里标题后面本来就有内容，回退会把标题连同
+      // 它自己的表一起推到下一页，上一页留下半屏空白：2026-11-21 dmtp 实测，
+      // 第 2 屏只有 TL;DR 列表（242/436），第 3 屏只有标题 + 一张单行表（221/436）。
+      const endsWithHeading = (k) => units[k].to - units[k].from === 1 && isHeading(kidsHtml[units[k].from]);
+      while (end - u > 1 && endsWithHeading(end - 1)) end--;
       // 整页只有一个标题时，把下一块硬拉进来。
       // 否则「标题独占一屏、下一屏才见图」——2026-11-12 实际发生（第 5 屏只有一行
       // 「3. 方法：展开 + 重排」，图在第 6 屏）。合并后会超高，交给下面的整体缩放兜底。
-      if (end - u === 1 && isHeading(kidsHtml[units[u].from]) && end < units.length) end++;
+      if (end - u === 1 && endsWithHeading(u) && end < units.length) end++;
       const sliceFrom = units[u].from;
       const sliceTo = units[end - 1].to;
       pages.push(kidsHtml.slice(sliceFrom, sliceTo));
@@ -683,6 +753,9 @@ async function renderSlides(markdown, limit) {
     }
   }
   // 超过发布上限（小红书单篇 ≤ 18 图，扣掉封面）就只截前 limit 屏，末屏提示去长文
+  if (process.env.DEBUG_PAGES) {
+    pages.forEach((pg, i) => console.error(`PAGE ${i + 1}: ` + pg.map((h) => (h.match(/^<h[12][^>]*>(.*?)<\/h[12]>/)?.[1] ?? h.slice(0, 26).replace(/\n/g, ' '))).join(' | ')));
+  }
   const truncatedPages = pages.length > limit;
   const visiblePages = truncatedPages ? pages.slice(0, limit - 1) : pages;
   const totalPages = pages.length;
@@ -739,7 +812,7 @@ async function renderSlides(markdown, limit) {
           body.style.width = `${(100 / k).toFixed(3)}%`;
           // transform 不改变布局占位，所以还得把盒子的高度按缩放比例压回去。
           // 不压的话 `.page-no`（margin-top:auto）会被推到画布外，
-          // 那一屏就没了页码和「关注 Paper to Post」（2026-11-12 实际发生）。
+          // 那一屏就没了页码和文末那行署名（2026-11-12 实际发生）。
           //
           // **但这里绝不能加 overflow:hidden**：裁剪发生在 transform 之前的布局坐标系里，
           // body 高 = used×k，内容布局高 = used，于是 0→used×(1−k) 那截被直接切掉。
@@ -766,6 +839,11 @@ async function renderSlides(markdown, limit) {
         let bottom = body.getBoundingClientRect().top;
         for (const n of body.children) bottom = Math.max(bottom, n.getBoundingClientRect().bottom);
         if (bottom > limit + 1) errs.push(`正文底部越界 ${Math.round(bottom - limit)}px`);
+        // 整体被 scale 压过时，上面的 bottom 是**缩放后**的坐标，可能刚好卡在边界内，
+        // 但字已经小到读不了。这类屏必须报出来——2026-11-18 dspark 第 3 屏
+        // 「3. 方法」整节就这样消失（内容在 DOM 里、在画布外）。
+        const k = body.getBoundingClientRect().height / (body.scrollHeight || 1);
+        if (k < 0.9) errs.push(`正文整体缩到 ${k.toFixed(2)}，字会小到读不清`);
       }
       slide.querySelectorAll('img, table').forEach((n) => {
         const r = n.getBoundingClientRect();
@@ -779,7 +857,14 @@ async function renderSlides(markdown, limit) {
           const fr = fig.getBoundingClientRect();
           if (r.left > fr.left - 1 && n.naturalWidth / n.naturalHeight > 0) { /* 正常 */ }
         }
-        const ratio = r.width / r.height;
+        // 用 clientWidth/clientHeight，不用 getBoundingClientRect：
+        // 后者**含 1px 边框**（`.slide img` 有 border），宽高各多加 2px。
+        // 对一张 4.84:1 的超宽表图，2px 就能把比例从 4.84 拉到 4.74，
+        // 于是「没变形」的图被报成变形（2026-11-18 Draft-OPD 主结果表就是这样被拦下的）。
+        const cw = n.clientWidth;
+        const ch = n.clientHeight;
+        if (!cw || !ch) return;
+        const ratio = cw / ch;
         const nat = n.naturalWidth / n.naturalHeight;
         if (Math.abs(ratio - nat) / nat > 0.02) errs.push(`IMG 变形 ${ratio.toFixed(3)} vs ${nat.toFixed(3)}`);
       });
@@ -789,7 +874,81 @@ async function renderSlides(markdown, limit) {
       console.error(`✗ 第 ${index + 1} 屏排版越界：${bad.join('；')}`);
       process.exitCode = 1;
     }
-    await view.screenshot({ path: file });
+    // 截图前把滚动位置归零并强制一次布局。
+    // 上一页可能因为内容更长把文档撑高、浏览器保留了 scrollY，于是这一页
+    // 截出来是「从中间开始」的一段——2026-11-18 dspark 第 3 屏整个「3. 方法」
+    // 就这样凭空消失（DOM 里在、图上看不到）。
+    await view.evaluate(() => {
+      window.scrollTo(0, 0);
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      void document.body.offsetHeight;   // 强制同步布局
+    });
+    // 等两帧 + 一小段真实时间：KaTeX 用的是 webfont，字体到位后行高会变，
+    // 重排没结束时截图会拿到「上半页已绘制、下半页还空白」的中间态
+    // （2026-11-18 dspark 第 3 屏「3. 方法」整节就是这样丢的）。
+    // 强制整页重绘：先滚到底再回顶。headless Chromium 在「上一页内容更短、
+    // 本页 DOM 被整体替换」时只重绘已进入过合成层的区域，页面下半截保持空白——
+    // 2026-11-18 dspark 第 3 屏就是这样：DOM 里 4 个块都在、高度也对，图里只有前 2 个。
+    await view.evaluate(async () => {
+      const h = Math.max(document.documentElement.scrollHeight, 520);
+      window.scrollTo(0, h);
+      await new Promise((r) => requestAnimationFrame(r));
+      window.scrollTo(0, 0);
+      await new Promise((r) => requestAnimationFrame(r));
+    });
+    await view.waitForTimeout(150);
+    // 用 clip 明确圈定画布：headless 下 `screenshot({path})` 按 viewport 截，
+    // 但页面若因前几页的重排残留在某个滚动/合成状态，会截出「上半页有、下半页空」
+    // （2026-11-18 dspark 第 3 屏实测：DOM 4 个块、样式全正常，图里只有前 2 个）。
+    // clip 走的是「按坐标绘制」，不依赖 viewport 的滚动状态。
+    // 截**元素**而不是页面：`page.screenshot()` 在 headless 下按视口绘制，
+    // 长页面被替换后下半截可能是旧的合成层；`locator.screenshot()` 走元素边界，
+    // 会强制重新栅格化该元素（2026-11-18 第 3 屏「3. 方法」消失的最后解法）。
+    // 每页换一个干净的 page 来截图。
+    // 在同一个 page 上反复 `document.body.innerHTML = ...` 时，headless Chromium
+    // 会把上一页遗留的合成层一并保留，新内容只要没触发重排就画不出来——
+    // 2026-11-18 dspark 第 3 屏「3. 方法」反复消失（DOM 4 块、高度正确、图上 2 块）。
+    // 新 page 从空白开始，没有可继承的合成状态。
+    const shot = await browser.newPage({ viewport: { width: 390, height: 520 }, deviceScaleFactor: 2 });
+    await shot.setContent(`<!doctype html><html><head><meta charset="utf-8">${css}<style>${SLIDE_CSS}</style></head>
+      <body>${await view.evaluate(() => document.querySelector('article.slide').outerHTML)}</body></html>`, { waitUntil: 'load' });
+    await shot.evaluate(() => Promise.all(Array.from(document.images).map((i) => (i.complete ? 0 : new Promise((r) => { i.onload = i.onerror = r; })))));
+    await shot.evaluate(() => document.fonts.ready);
+    await shot.waitForTimeout(120);
+    if (process.env.FONT_DEBUG) {
+      const fd = await shot.evaluate(() => ({
+        status: document.fonts.status,
+        size: document.fonts.size,
+        pingfang: document.fonts.check('12px "PingFang SC"'),
+        links: [...document.querySelectorAll('link')].map(l => ({ href: l.href, sheet: !!l.sheet })),
+        zh: (document.querySelector('.slide-body')?.innerText ?? '').slice(0, 20),
+        zhW: (() => { const n = document.querySelector('.slide-body p'); if (!n) return null; const r = document.createRange(); r.selectNodeContents(n); return Math.round(r.getBoundingClientRect().width); })(),
+      }));
+      console.error(`FONT ${no}: ` + JSON.stringify(fd));
+    }
+    // 强制整页重绘后再截。
+    // headless Chromium 在「新开 page + setContent」时偶发只绘制部分图层：
+    // DOM 完整、字体已加载（`document.fonts.status === 'loaded'`、中文测宽正常）、
+    // 但图上只剩英文和数字，整段中文不出现（2026-11-21 dflare 第 6 屏实测，
+    // 那一屏恰好是拆表产生的两张相邻 table）。
+    // 之前 bsk 侧的解法是「滚动到底再回顶」，这里同样适用。
+    await shot.evaluate(async () => {
+      const h = Math.max(document.documentElement.scrollHeight, 520);
+      window.scrollTo(0, h);
+      await new Promise((r) => requestAnimationFrame(r));
+      window.scrollTo(0, 0);
+      await new Promise((r) => requestAnimationFrame(r));
+      // 逐个元素读一次布局属性，强制栅格化整页
+      for (const n of document.querySelectorAll('.slide-body *')) void n.offsetHeight;
+    });
+    await shot.waitForTimeout(80);
+    await shot.screenshot({ path: file });
+    await shot.close();
+    if (process.env.DUMP_SLIDE) {
+      const fs2 = await import('node:fs');
+      fs2.writeFileSync(`/tmp/slide-${no}.html`, `<!doctype html><html><head><meta charset="utf-8">${css}<style>${SLIDE_CSS}</style></head><body>${await view.evaluate(() => document.querySelector('article.slide').outerHTML)}</body></html>`);
+    }
     out.push(file);
     // 交付清单要列出每屏讲什么：优先取这屏第一个标题，没有标题就取第一个内容块的首句
     const label = await view.evaluate(() => {
@@ -827,7 +986,7 @@ async function renderCards(source) {
     const bgCss = bg ? `--bg-img: linear-gradient(rgba(7,11,24,0.55), rgba(7,11,24,0.88)), url('${assetBase}/asset/${bg}');` : '';
     await page.setContent(`<!doctype html><html><head><meta charset="utf-8">${css}</head>
       <body><div class="xcard" style="${bgCss}">
-        <div class="vhead"><span class="brand-mark"><span class="dot"></span>LLM ATLAS</span><span>${escHtml(cover.venue || '论文解读')}</span></div>
+        <div class="vhead"><span class="brand-mark"><span class="dot"></span>${BRAND_UPPER}</span><span>${escHtml(cover.venue || '论文解读')}</span></div>
         <div class="content">${cardBody(slide)}</div>
         <div class="foot">${escHtml(cover.id ? 'arXiv:' + cover.id : '')}</div>
         <div class="page-no">${String(index + 1).padStart(2, '0')} / ${String(slides.length).padStart(2, '0')}</div>

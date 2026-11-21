@@ -12,9 +12,11 @@
  *   - 外链 <a> 会被去掉 href：把「链接」文本保留，URL 以纯文本写在后面
  *   - 图片必须是微信域名（上传素材后返回的 url），相对路径和 data: 都会被丢弃
  *
- * 论文原表（`表 N` 图片）：有 LaTeX 表源时**渲染成窄表**，不贴截图。
- * 手机正文宽 ~343px，18 列的原表截图缩进去每个数字只剩 4–5px——
- * 和之前的站点是同一个问题，只是这里连横向滚动都没有。
+ * 论文原表（`表 N` 图片）：**一律贴原表截图**，不转窄表。
+ * 早先理由是「手机正文宽 ~343px，18 列的原表截图缩进去每个数字只剩 4–5px」，
+ * 所以把有 LaTeX 表源的还原成 HTML 窄表。实测下来窄表的问题更大：主表被拆成
+ * （1/2）（2/2）几张、相邻两列并成 `5.15× / 6.53`，读者没法回论文原表逐格核对。
+ * 截图是论文排版的最终结果，逐行逐列一致，点开放大就能看。
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve, basename } from 'node:path';
@@ -22,6 +24,7 @@ import process from 'node:process';
 import katex from 'katex';
 import { marked } from 'marked';
 import { launchOptions } from './lib/chromium.mjs';
+import { envGet } from './lib/env.mjs';
 import { compactForTable } from './lib/paper-tables.mjs';
 import { loadExtras, renderExtrasNarrow } from './lib/paper-extras.mjs';
 
@@ -78,6 +81,8 @@ function texToPlain(tex) {
 }
 
 const ROOT = process.cwd();
+// 文末署名一行。默认就是仓库名，换成你自己的栏目名即可（也可以在 .env 里设 SITE_NAME）。
+const SITE_NAME = envGet('SITE_NAME', ROOT) || 'Paper to Post · 论文解读';
 const args = Object.fromEntries(process.argv.slice(2).map((arg) => {
   const [key, ...rest] = arg.replace(/^--/, '').split('=');
   return [key, rest.join('=') || true];
@@ -160,7 +165,12 @@ if (extras.diagram || extras.compare) {
   const tag = extrasImgSrc
     ? `<p><img src="${extrasImgSrc}" alt="机制图 · ${extraEsc(extras.diagram.spec.title ?? '')}"></p>`
     : '';
-  const extrasHtml = renderExtrasNarrow(extras, { imgTag: tag, small: 13 });
+  // compare.json 的 ours/values 是模型写的，里面常带 `$B_k$`、`$c_k^*$` 这种记号。
+  // 派生区块是**在 markdown 解析之后**拼进来的，走不到上面的 `$…$` → 占位符那一步，
+  // 不处理就会把美元符号原样印出来（2026-11-17 实测：公众号正文里出现 `$B_k$`）。
+  const extrasHtmlRaw = renderExtrasNarrow(extras, { imgTag: tag, small: 13, articleMd: source, matrixTable: true });
+  const extrasHtml = extrasHtmlRaw.replace(/(?<![$\\])\$([^\n$]+?)\$(?!\$)/g,
+    (_m, tex) => `@@M${inline.push(tex.trim()) - 1}@@`);
   // 「附：问答」是附录，留在最后；横向对比是正文内容，插在它前面。
   html = /<h2>附[：:]\s*问答<\/h2>/.test(html)
     ? html.replace(/(<h2>附[：:]\s*问答<\/h2>)/, `${extrasHtml}\n$1`)
@@ -186,10 +196,36 @@ await page.setContent(
 await page.evaluate(() => document.fonts.ready);
 
 /** 渲染一个公式成 PNG（透明底黑字），返回 { buffer, width } */
+//
+// 字号必须跟正文对齐。公众号的公式是**图片**，宽度按渲染时的 CSS 像素回填，
+// 所以这里的 px 就是读者看到的字号——和正文 16px 无关，写多少就是多少。
+//
+// 2026-11-19 两轮反馈定下来的值。
+// 第一轮：原来写死行内 20 / 行间 22，用户说「公式比正文大很多」。
+// 第二轮：改成 16（与正文相等）后用户仍说「还是有点大」。量了墨迹高度才明白
+// 为什么——**「相等的 font-size」不等于「相等的高度」**：
+//   中文 16px          墨迹 15.00 px
+//   C(B,ρ) @16px       墨迹 18.25 px   ← 高出 22%，这就是「突兀」
+//   C(B,ρ) @15px       墨迹 17.00 px
+//   C(B,ρ) @14px       墨迹 16.00 px   ← 只高 7%，视觉齐平
+//   s_{i,k} @14px      墨迹 13.75 px   ← 纯小写变量反而略小于中文
+// 带括号/上下标的公式天然比 x-height 高，所以要让**最高的那部分**落在中文高度上，
+// 字号必须比正文小一档。取 14px。
+//
+// 行间给 15px：它独占一行居中、没有相邻正文可比，完全同字号显得弱；
+// 且 K_ρ(B)=max(…) 这类长式子 14px 渲染出来才 200px 宽（正文约 358px），偏小。
+// 行间比行内多 1px 是补偿，不是放大。
+//
+// ⚠️ 这个结论是**按墨迹实测**定的，不是按 font-size 相等。以后要调，
+// 先量「中文 16px 的墨迹」和「目标公式的墨迹」，让后者落在前者 +0~10%。
+const FS_INLINE_FORMULA = 14;
+const FS_DISPLAY_FORMULA = 15;
+
 async function renderFormula(tex, displayMode) {
+  const fs = displayMode ? FS_DISPLAY_FORMULA : FS_INLINE_FORMULA;
   await page.setContent(
     `<!doctype html><html><head><meta charset="utf-8"><style>${katexCss.replace(/url\(fonts\//g, `url(file://${fontDir}/`)}</style>
-     <style>body{margin:0;padding:8px;background:#fff;display:inline-block}#m{font-size:${displayMode ? 22 : 20}px;}</style>
+     <style>body{margin:0;padding:8px;background:#fff;display:inline-block}#m{font-size:${fs}px;}</style>
      </head><body><div id="m">${katex.renderToString(tex, { displayMode, throwOnError: false })}</div></body></html>`,
     { waitUntil: 'load' },
   );
@@ -262,12 +298,14 @@ function flattenLists(input) {
   return out;
 }
 
-// ---- 3b. 论文原表 → 窄表（有 LaTeX 表源时） ----
-// 公众号手机正文 ~343px：18 列的原表截图缩进去每个数字只剩 4–5px，和站点当初一样。
-// 这里把 `![表 N · …](assets/tab-*.png)` 换成几张窄表，每张 5 列左右、可直接读。
-// 没有表源的表保持原样（截图），交给后面的图片管线。
+// ---- 3b. 论文原表：默认贴截图，不转窄表 ----
+// 公众号手机正文 ~343px：18 列的原表截图缩进去每个数字只剩 4–5px，所以这里曾经
+// 把 `![表 N · …](assets/tab-*.png)` 换成几张窄表。但窄表把主表拆成（1/2）（2/2），
+// 相邻两列并成一格，读者没法回论文原表核对——最终改回截图（2026-11-19）。
+// 下面这段窄表替换保留着，由 TABLES_AS_IMAGES 开关控制，默认不执行。
 // 放在样式表之后，是为了用 S.tblcap / S.th / S.td 生成内联样式。
-{
+const TABLES_AS_IMAGES = true;
+if (!TABLES_AS_IMAGES) {
   const articleDir = join(ROOT, 'articles', slug);
   const replaced = [];
   for (const img of images) {
@@ -359,7 +397,7 @@ for (const img of images) {
 // 注意：这里**不再**删除「原表图片后面的切片表」。
 // 旧规则的理由是「原表已经作为图片插入了，切片表重复」——但图片本身在手机上就是
 // 一张看不清的位图，删掉切片表等于把唯一可读的版本删了（2026-11-12 之前一直这样）。
-// 现在原表有表源时会换成窄表，切片表则由上面那段按需删除。
+// 现在原表一律贴截图，切片表就在图后面，保留。
 
 // 开头元信息：逐行段落，避免 grid 在公众号里挤成一坨
 //
@@ -374,7 +412,21 @@ for (const img of images) {
 //   ② 文章级「阅读原文」——每条草稿只有一个名额，这里给个人站本篇页面
 //      （content_source_url，在 wechat-publish.mjs 里设）。
 // 纯文本 URL 仍然保留，方便读者复制；二维码贴在它下面一行。
-// 每条链接配一枚二维码：公众号正文不支持可点外链，扫码是唯一能「点开」的形态。
+// 默认**每条链接都出码**：公众号正文里没有别的「可点」形态。
+//
+// 但链接一多就会出问题。2026-11-18 实测：元信息块挂了 7 枚码（arXiv 原文 / 论文 PDF /
+// 代码仓库 / 动态架构图 / 静态架构图 / 模型权重 ×2），一整屏都是黑白方块，正文要往下
+// 滚才看得到。那篇的取舍是「只给手机上手打不开的页面出码」——arXiv / PDF / GitHub
+// 这些地址本来就印在上一行的纯文本里，读者复制不算难。
+//
+// 这个取舍取决于你的文章有什么链接，所以做成配置：`WECHAT_QR_PATTERN` 是一个
+// 匹配完整 URL 的正则，只给命中的链接出码；不设则全部出码。
+const QR_PATTERN = (() => {
+  const raw = process.env.WECHAT_QR_PATTERN;
+  if (!raw) return null;
+  try { return new RegExp(raw); } catch { return null; }
+})();
+const wantsQR = (url) => (QR_PATTERN ? QR_PATTERN.test(url) : true);
 const qrImages = []; // { key, url }
 if (metaLines.length) {
   const qrKeys = new Map(); // url → 占位符 key（同一地址只生成一张图）
@@ -389,10 +441,11 @@ if (metaLines.length) {
   // 二维码统一收在元信息块最下面一行：每条链接各挂一枚，标签写「二维码下面那行小字」。
   // 早期版本是「每行文字后面紧跟一排二维码」，5 条链接会把元信息块撑到一屏多；
   // 收成一行后整块高度稳定在 400px 上下（2026-11-15 实拍）。
-  const allLinks = []; // 顺序即显示顺序
+  const allLinks = []; // 顺序即显示顺序（只装需要出码的）
   const lineHtml = ([k, v]) => {
     const links = [...v.matchAll(/<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g)]
-      .map((m) => ({ url: sanitizeUrlTrail(m[1]).replace(/&amp;/g, '&'), text: m[2].replace(/<[^>]+>/g, '').trim() }));
+      .map((m) => ({ url: sanitizeUrlTrail(m[1]).replace(/&amp;/g, '&'), text: m[2].replace(/<[^>]+>/g, '').trim() }))
+      .filter((l) => wantsQR(l.url));
     for (const l of links) if (!allLinks.some((x) => x.url === l.url)) allLinks.push(l);
     // 锚文本本身就是 URL 时不再重复补一次（裸链接会被 marked 自动包成 <a>）
     const textPart = v.replace(/<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g, (_m, url, text) => {
@@ -468,8 +521,9 @@ if (tagList.length) {
   );
 }
 
+// 文末署名：SITE_NAME 可换成你自己的站点/栏目名。
 html += wrap(
-  `<p style="${S.p}font-size:${FS - 3}px;color:#a39b8b;margin:0;text-align:center;">{{SITE_NAME}} · 论文解读</p>`,
+  `<p style="${S.p}font-size:${FS - 3}px;color:#a39b8b;margin:0;text-align:center;">${SITE_NAME}</p>`,
   'margin-top:30px;',
 );
 
@@ -568,7 +622,6 @@ function shortLabel(text, url = '') {
     if (/github\.com$/.test(u.host)) return '代码仓库';
     if (/huggingface\.co$/.test(u.host) || u.host === 'hf.co') return '模型权重';
     if (/modelscope\.cn$/.test(u.host)) return '魔搭模型';
-    if (/note\.ossradar\.top$/.test(u.host)) return /-static\.html?$/.test(p) ? '静态架构图' : '动态架构图';
   }
   const raw = String(text ?? '').replace(/（[^）]*）/g, '').trim();
   if (raw && !/^https?:\/\//.test(raw)) return raw.length > 10 ? `${raw.slice(0, 10)}…` : raw;

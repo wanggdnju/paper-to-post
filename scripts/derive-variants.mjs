@@ -112,7 +112,9 @@ function deriveZhihu() {
   // 主稿的图注已经带了 `图 N ·` / `表 N ·` 前缀，直接拿它当号；没有前缀时才顺延。
   let figN = 0;
   let tabN = 0;
-  out = out.replace(/!\[([^\]]*)\]\(([^)]*)\)/g, (_, alt) => {
+  // alt 里允许出现方括号（`[A, T1, MASK×6]`）：`[^\]]*` 会在第一个 `]` 断开，
+  // 该图就整个不被替换，知乎稿里留成 markdown 图片行、灌稿时被丢掉（2026-11-21 dmtp 实测）。
+  out = out.replace(/!\[(.*?)\]\(([^)]*)\)/g, (_, alt) => {
     const numbered = alt.match(/^\s*(图|表)\s*(\d+)\s*·\s*([\s\S]*)$/);
     if (numbered) {
       const [, kind, n, rest] = numbered;
@@ -629,7 +631,11 @@ ${numbered}
       }
       if (/[：:]$/.test(t) && i + 1 < blocks.length) {
         const nk = blocks[i + 1].kind;
-        if (nk === 'math' || nk === 'table') set.add(i + 1);
+        // 冒号后面接的不只是公式/表格，更常见的是列表（「作者自己交代的几处，值得记：」）。
+        // 只补公式/表格时，长图里会留下一个悬空的引子句——读者被「值得记：」提起，
+        // 翻页却是下一个标题（2026-11-21 dmtp 第 11 节实测，整节只剩这一句）。
+        const nextIsList = nk === 'para' && /^(?:[-*+]\s|\d+\.\s)/.test(blocks[i + 1].text.trim());
+        if (nk === 'math' || nk === 'table' || nextIsList) set.add(i + 1);
       }
     }
     chosen = [...set].sort((a, b) => a - b);
@@ -683,12 +689,36 @@ ${numbered}
     if (orphans.size) chosen = chosen.filter((i) => !orphans.has(i));
   }
 
+  // ⑥bis 空节补段的**最后一跳**：③ 补进来的那段可能正是 ⑥ 判定的序数回指
+  // （dmtp 第 3 节补的是「主方法是第四种…」，而它依赖的列表不在成品里，
+  // 被 ⑥ 整段删掉后这一节又空了）。补段放在所有「删」之后，才能保证成品没有空节。
+  const lateFilled = new Set();
+  for (const h of chosen.filter((i) => blocks[i].kind === 'h2')) {
+    const nextH2 = blocks.findIndex((b, i) => i > h && b.kind === 'h2');
+    const end = nextH2 < 0 ? blocks.length : nextH2;
+    if (chosen.some((i) => i > h && i < end && isProse(i))) continue;
+    // 这一次接受列表项：宁可给一个「三档对照」的列表，也不要一节只有标题。
+    let best = -1;
+    let bestScore = -1;
+    const have = new Set(chosen);
+    for (let i = h + 1; i < end; i++) {
+      if (blocks[i].kind !== 'para') continue;
+      if (have.has(i)) continue;          // 必须在成品之外挑，否则同一块会被塞第二遍
+      const sc = paraScore(blocks[i].text);
+      if (sc > bestScore) { bestScore = sc; best = i; }
+    }
+    if (best < 0) continue;
+    chosen = [...chosen, best].sort((a, b) => a - b);
+    lateFilled.add(best);
+  }
+
   // ⑦ 字数预算：小红书正文 2000 字是硬上限，超了会被截断。
   //    上面各步都在「补」，最后必须有一次「收」：按段落价值从低到高删，
   //    只删正文段——标题、图、表、公式、带保留的句子、每节第一段都不动。
   {
     const zhCount = () => (chosen.map((i) => blocks[i].text).join('\n').match(/[一-龥]/g) ?? []).length;
     const protectedSet = new Set();
+    for (const i of lateFilled) protectedSet.add(i);   // 空节补进来的段不能又被裁掉
     for (const i of chosen) {
       if (blocks[i].kind !== 'para') protectedSet.add(i);
       if (hasHedge(blocks[i].text)) protectedSet.add(i);

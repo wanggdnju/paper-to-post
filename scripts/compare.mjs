@@ -183,6 +183,11 @@ const SYSTEM = `你在帮一位算法工程师做论文的横向对比，读者�
 3. 对比维度要选「能从机制上区分的」，不要选「效果更好」这种。好的维度例如：条件化发生的位置、条件信息的载体、注意力方向、监督信号、额外的解码开销、部署约束。
 4. 判断要尖锐但不夸大。指出对方的局限时，用原文的措辞，不要自己加形容词。
 5. values 里的键必须和 baselines 里的 name 完全一致；本工作那一列放在 ours 字段。
+6. **所有公式一律用 $…$ 包起来**，机制与代价两栏也一样。写成 $\alpha_i$、$q_j$、$1-d_{\mathrm{TV}}(p,q)$、
+   $\prod_i \alpha_i$、$c_i=\mathbf{1}[i\le j^*]$、$e^{-(i-1)/\gamma_d}$。不要写裸文本 \`q_j\`、\`α_i\`、\`∏α_i\`——
+   站点会把 $…$ 交给 KaTeX 排版，裸文本只会原样印成带下划线的字符。
+   单字母下标也要包：写 $p_i$ 不写 p_i。希腊字母用 LaTeX：$\alpha$ $\gamma$ $\sigma$ $\delta$ $\rho$。
+   数学运算符同样：$\le$ 不写 ≤，$\approx$ 不写 ≈，$\prod$ 不写 ∏。
 
 只输出 JSON，不要解释。`;
 
@@ -226,16 +231,52 @@ async function buildMechanism() {
   const { createLlm, extractJson } = await import('./lib/llm.mjs');
   const llm = createLlm();
   if (!llm.configured) throw new Error('LLM 未配置，用 --no-llm 只生成数字部分');
-  const text = await llm.complete({
-    messages: [
-      { role: 'system', content: SYSTEM },
-      { role: 'user', content: USER },
-    ],
-    maxTokens: 6000,
-    temperature: 0.2,
-    jsonMode: true,
-  });
-  const parsed = extractJson(text);
+
+  // 裸公式（`q_j`、`1-d_TV`、`∏α_i`）在站点上不排版，只会原样印出来。
+  // 2026-11-18 用户指出「最后的表格里面还会有些公式」——bebop 那张对比表的
+  // 39 个格子里全是这种写法。提示词已经补了规则，这里再机械验一道：
+  // 发现裸公式就带反例重问一次，仍不干净才落盘并报出来，不静默放行。
+  const BARE_RE = /[A-Za-zα-ωΑ-Ω][α-ωΑ-Ω]*(?:_\{[^}]{1,12}\}|_[0-9A-Za-z]|\^\{[^}]{1,12}\}|\^[0-9A-Za-z])+|[∏Σ∇∂≈≤≥∝]/;
+  const bareIn = (s) => {
+    if (typeof s !== 'string') return null;
+    const x = s.replace(/\$\$[\s\S]*?\$\$/g, ' ').replace(/\$[^$\n]+?\$/g, ' ');
+    const m = x.match(BARE_RE);
+    return m ? m[0] : null;
+  };
+  const collectBare = (obj) => {
+    const out = [];
+    for (const b of obj.baselines ?? []) {
+      for (const k of ['mechanism', 'cost', 'lineage']) { const v = bareIn(b?.[k]); if (v) out.push(`${b.name}.${k}: ${v}`); }
+    }
+    for (const d of obj.dimensions ?? []) {
+      const o = bareIn(d?.ours); if (o) out.push(`${d.name}.ours: ${o}`);
+      for (const [k, v] of Object.entries(d?.values ?? {})) { const w = bareIn(v); if (w) out.push(`${d.name}.${k}: ${w}`); }
+    }
+    for (const t of obj.takeaways ?? []) { const v = bareIn(t); if (v) out.push(`takeaway: ${v}`); }
+    return out;
+  };
+
+  const ask = async (extra) => {
+    const text = await llm.complete({
+      messages: [
+        { role: 'system', content: SYSTEM },
+        { role: 'user', content: USER + (extra ? `\n\n${extra}` : '') },
+      ],
+      maxTokens: 6000,
+      temperature: 0.2,
+      jsonMode: true,
+    });
+    return extractJson(text);
+  };
+
+  let parsed = await ask('');
+  let bare = collectBare(parsed);
+  if (bare.length) {
+    console.warn(`⚠️ 上一轮有 ${bare.length} 处裸公式，带反例重问：${bare.slice(0, 4).join('；')}`);
+    parsed = await ask(`上一轮这些地方写成了裸公式，全部改成 $…$ 再输出一遍：\n${bare.slice(0, 12).map((x) => `- ${x}`).join('\n')}`);
+    bare = collectBare(parsed);
+    if (bare.length) console.warn(`⚠️ 仍有 ${bare.length} 处裸公式（已落盘，需人工看一眼）：${bare.slice(0, 6).join('；')}`);
+  }
   const haystack = norm(`${articleMd}\n${researchMd}`);
 
   // 出处校验：对不上的条目不进产物，但要留在 dropped 里——

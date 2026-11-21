@@ -50,9 +50,18 @@ const meta = parseArticle(readFileSync(yamlPath, 'utf8')).data;
 //                   起因是投机解码入门稿）。这类没有「实验设置 / 主要结果」这些节，
 //                   强行套论文骨架只会把文章写坏，所以结构检查另说。
 const kind = String(meta.kind ?? 'paper');
-const hasProvenance = kind === 'paper' ? Boolean(meta.arxiv_id) : Boolean(meta.source_url || meta.arxiv_id);
+// 第三种情况：论文但**没有 arXiv 号**（只有厂商博客页或 GitHub 上的 PDF）。
+// 2026-11-21 EAGLE-4 起：这类稿件必须显式写 `no_arxiv: true`，
+// 而且仍要有 source_url——不给「悄悄留空」的余地，读者要能点回原文。
+const isPaper = kind === 'paper';
+const hasProvenance = isPaper
+  ? Boolean(meta.arxiv_id) || (meta.no_arxiv === true && Boolean(meta.source_url))
+  : Boolean(meta.source_url || meta.arxiv_id);
+const provenanceLabel = isPaper
+  ? (meta.arxiv_id ? `arxiv_id=${meta.arxiv_id}` : `无 arXiv 号，来源=${meta.source_url ? '有' : '空'}`)
+  : `来源=${meta.source_url ? '有' : '空'}`;
 check('A1', hasProvenance && Boolean(meta.title),
-  `元数据：${kind === 'paper' ? `arxiv_id=${meta.arxiv_id || '空'}` : `来源=${meta.source_url ? '有' : '空'}`} title=${String(meta.title || '空').slice(0, 40)}`);
+  `元数据：${provenanceLabel} title=${String(meta.title || '空').slice(0, 40)}`);
 
 const articlePath = resolveFile(meta, 'article', ['article.md', `${slug}.md`]);
 if (!articlePath) {
@@ -118,9 +127,17 @@ check('A4', density <= (config.max_chars_per_bold ?? 160) && bold.length >= head
     : '加粗定界符均可渲染');
 }
 
-// A5 表格
-const tables = [...body.matchAll(/^\|.*\|\n\|\s*-+/gm)].length;
-check('A5', tables >= 3, `表格 ${tables} 个（至少 3 个，主要结果与深入分析各要有）`);
+// A5 表格／数据表
+//
+// 2026-11-19 起数据表一律贴论文原表截图（用户要求），它们不再是 Markdown 表格，
+// 所以只数 `| ... |` 会误判「表格不足」。判据改成：
+//   手写表（Markdown）+ 论文原表截图（`表 N · ` 图注）= 数据呈现的总数。
+// 下限仍是 3：主结果、深入分析各要有表，剩一个给对照/结论。
+const mdTables = [...body.matchAll(/^\|.*\|\n\|\s*-+/gm)].length;
+const tableShots = [...body.matchAll(/^!\[表\s*\d+/gm)].length;
+const tables = mdTables + tableShots;
+check('A5', tables >= 3,
+  `表格 ${tables} 个（手写 ${mdTables} + 原表截图 ${tableShots}；至少 3 个，主要结果与深入分析各要有）`);
 
 // A6 行间公式必须单行
 const multiLineBlocks = [...body.matchAll(/\$\$([^$]+)\$\$/g)].filter((m) => m[1].includes('\n'));
@@ -131,7 +148,7 @@ const inlineMath = [...body.matchAll(/(?<![$\w])\$([^$\n]+?)\$(?!\$)/g)].map((m)
 // 白名单只收「KaTeX 一定能渲染、且长图里不会掉字」的宏。
 // 漏登记的后果是自检直接失败，所以宁可放宽——收窄的判据应该是「渲染失败」，
 // 那件事下面 katexErrors 已经在查了，不需要靠白名单再挡一遍。
-const allowedMacros = new Set(['mathrm', 'text', 'frac', 'times', 'cdot', 'mathbb', 'left', 'right', 'dots', 'quad', 'qquad', 'exp', 'approx', 'tau', 'gamma', 'eta', 'leq', 'geq', 'to', 'in', 'sqrt', 'sigma', 'odot', 'mid', 'sum', 'prod', 'log', 'Pr', 'alpha', 'lambda', 'Delta', 'partial', 'top', 'mathcal', 'operatorname', 'ell', 'cdots', 'ldots', 'cup', 'cap', 'subset', 'forall', 'exists', 'infty', 'langle', 'rangle', 'neg', 'land', 'lor', 'min', 'max', 'hat', 'bar', 'tilde', 'beta', 'theta', 'mu', 'nu', 'pi', 'rho', 'phi', 'psi', 'omega', 'Omega', 'Sigma', 'Pi', 'frac', 'displaystyle', 'mathop', 'limits', 'pm', 'mp', 'ast', 'star', 'circ', 'bullet', 'oplus', 'otimes', 'equiv', 'neq', 'lt', 'gt', 'leqslant', 'geqslant', 'propto', 'sim', 'prime', 'dotsc', 'dotsb', 'textstyle', 'scriptstyle', 'bar', 'vec', 'widehat', 'widetilde', 'langle', 'rangle', 'lceil', 'rceil', 'lfloor', 'rfloor', 'lvert', 'rvert', 'lVert', 'rVert', 'Theta', 'le', 'ge']);
+const allowedMacros = new Set(['mathrm', 'text', 'frac', 'times', 'cdot', 'mathbb', 'left', 'right', 'dots', 'quad', 'qquad', 'exp', 'approx', 'tau', 'gamma', 'eta', 'leq', 'geq', 'to', 'in', 'sqrt', 'sigma', 'odot', 'mid', 'sum', 'prod', 'log', 'Pr', 'alpha', 'lambda', 'Delta', 'partial', 'top', 'mathcal', 'operatorname', 'ell', 'cdots', 'ldots', 'cup', 'cap', 'subset', 'forall', 'exists', 'infty', 'langle', 'rangle', 'neg', 'land', 'lor', 'min', 'max', 'hat', 'bar', 'tilde', 'beta', 'theta', 'mu', 'nu', 'pi', 'rho', 'phi', 'psi', 'omega', 'Omega', 'Sigma', 'Pi', 'frac', 'displaystyle', 'mathop', 'limits', 'pm', 'mp', 'ast', 'star', 'circ', 'bullet', 'oplus', 'otimes', 'equiv', 'neq', 'lt', 'gt', 'leqslant', 'geqslant', 'propto', 'sim', 'prime', 'dotsc', 'dotsb', 'textstyle', 'scriptstyle', 'bar', 'vec', 'widehat', 'widetilde', 'langle', 'rangle', 'lceil', 'rceil', 'lfloor', 'rfloor', 'lvert', 'rvert', 'lVert', 'rVert', 'Theta', 'le', 'ge', 'delta', 'nabla', 'epsilon', 'varepsilon', 'zeta', 'kappa', 'xi', 'upsilon', 'chi', 'Lambda', 'Gamma', 'Phi', 'Psi', 'Upsilon', 'times', 'colon', 'middle', 'big', 'Big', 'bigg', 'Bigg', 'operatorname*', 'substack', 'underbrace', 'overbrace', 'mathrm', 'mathnormal', 'boldsymbol', 'textnormal', 'paragraph', 'ast', 'parallel', 'perp', 'angle', 'triangle', 'because', 'therefore', 'll', 'gg', 'prec', 'succ', 'sqsubseteq', 'subseteq', 'supset', 'setminus', 'emptyset', 'varnothing', 'aleph', 'hbar', 'imath', 'jmath', 'Re', 'Im', 'mathbf', 'bm', 'mathds', 'lesssim', 'gtrsim', 'aligned', 'array', 'matrix', 'pmatrix', 'bmatrix', 'text', 'mbox', 'nonumber']);
 const badMacros = new Set();
 for (const tex of inlineMath) {
   for (const m of tex.matchAll(/\\([a-zA-Z]+)/g)) if (!allowedMacros.has(m[1])) badMacros.add(m[1]);
@@ -210,7 +227,7 @@ if (existsSync(join(ROOT, 'articles', slug, 'facts.json'))) {
 }
 
 // A9 插图：正文引用的图片必须真实存在，且至少两张（架构图 + 结果图）
-const figureRefs = [...body.matchAll(/!\[([^\]]*)\]\(([^)\s]+)/g)].map((m) => m[2]);
+const figureRefs = [...body.matchAll(/!\[(.*?)\]\(([^)\s]+)/g)].map((m) => m[2]);
 const mdDir = dirname(join(ROOT, articlePath));
 const missingFigures = figureRefs.filter((src) => !/^https?:/.test(src) && !existsSync(join(mdDir, src)) && !existsSync(join(ROOT, src)));
 check('A9', figureRefs.length >= 2 && missingFigures.length === 0,
@@ -279,6 +296,32 @@ check('A9c', hasMeta, hasMeta ? '开头有元信息块（论文 / 作者 / 链�
     suspects.length
       ? `这些图的高度贴着旧视口上限 5000px，很可能被截断：${suspects.join('、')}（重跑 npm run fetch:figures -- --arxiv=<id> --slug=${slug}）`
       : `长图未被视口截断（${figureRefs.filter((s) => !/^https?:/.test(s)).length} 张已检查）`);
+}
+
+// A9e 图注里不能出现会破坏 markdown 图片语法的字符。
+//
+// 2026-11-21 dmtp 实测：图 2 的图注写「在 [A, T1, MASK×6] 上并行预测」，
+// 五处消费 `![alt](path)` 的正则都是 `[^\]]*`，在 alt 里第一个 `]` 就收尾——
+// render-article 里那张图 404、derive 的知乎稿留下原始 markdown、render-zhihu
+// 的 imageByNumber 少一个号导致「图3 找不到」占位符进了草稿。
+// 五处正则已统一改成 `(.*?)`，这条检查防的是**新写下的图注**再把它们撑坏：
+// 甲方案（方括号）在 `(.*?)` 下能工作，但换行/未闭合会重新踩坑，
+// 更稳妥的是写稿时就别在 alt 里用方括号和圆括号。
+{
+  const risky = [];
+  for (const m of body.matchAll(/^!\[[^\n]*$/gm)) {
+    const line = m[0];
+    const close = line.lastIndexOf('](');
+    const alt = close > 0 ? line.slice(2, close) : line.slice(2);
+    const bad = [];
+    if (/[[\]]/.test(alt)) bad.push('方括号');
+    if (/[()]/.test(alt)) bad.push('圆括号');
+    if (bad.length) risky.push(`L${body.slice(0, m.index).split('\n').length} ${bad.join('+')}`);
+  }
+  check('A9e', risky.length === 0,
+    risky.length
+      ? `图注里含会破坏 markdown 图片语法的字符：${risky.join('、')}（改成「A、T1、MASK×6」这类写法）`
+      : '图注字符安全（无方括号 / 圆括号）');
 }
 
 // A10 落地信息：代码 / 模型 / 项目页（没有时只提示，不阻断）
@@ -465,11 +508,57 @@ check('D3', Object.values(platforms).every((p) => ['todo', 'draft', 'published']
       : '发布状态与 urls 一致'));
 }
 
-// D5 知乎产物自检（dist/zhihu/<slug>.html）
+// D4b TeX 残留扫描：三个平台的产物里都不许出现裸 TeX。
 //
-// 这三条对应 2026-11-11 用户实际看到的三个问题，全部是「HTML 生成阶段就能查出来」的：
-//   ① 公式必须是 data-eeimg="2"（行间、居中）；写成 "1" 就是行内、左对齐，
-//      而且旧流程走工具栏插卡会额外留下空段落。
+// 这是 2026-11-18 那轮返工的根因。六篇已发布文章的知乎正文里，
+// `\sum_r(1+\ell_r)` 被降级成 `sum_r(1+ell_r)`、`T_{draft}` 被印成下划线形式，
+// 读者看到的是一串看不懂的符号。当时 publish-check 全绿——因为它只查
+// 「公式卡分类对不对」（D5），从不查「正文里还有没有没变成卡的 TeX」。
+//
+// 判据：剥掉已经渲染好的公式节点、代码块和标签之后，正文里不能再有
+//   `\命令`（两个字母以上，排除 `\|` 这种符号）或 `字母_下标`。
+// 表格单元格里的公式**允许**是纯文本（表格走进 tableCell，见 render-zhihu），
+// 所以要把 `<td>/<th>` 的内容先摘掉再判——否则 dspark 那种「表内用可读文本」
+// 的正确做法会被误报。
+{
+  const stripForResidue = (html) => {
+    let t = html
+      .replace(/<span class="ztext-math"[^>]*>[\s\S]*?<\/span>/g, '')  // 知乎公式卡
+      .replace(/<code[\s\S]*?<\/code>/g, '')                           // 行内代码是代码不是公式
+      .replace(/<pre[\s\S]*?<\/pre>/g, '')
+      .replace(/<td[\s\S]*?<\/td>/g, '')                               // 表格单元格另算
+      .replace(/<th[\s\S]*?<\/th>/g, '')
+      .replace(/<img[^>]*>/g, '')
+      .replace(/<[^>]+>/g, '');
+    return t;
+  };
+  const problems = [];
+  const perFile = [];
+  for (const plat of ['zhihu', 'wechat']) {
+    const p = join(ROOT, 'dist', plat, `${slug}.html`);
+    if (!existsSync(p)) continue;
+    const text = stripForResidue(readFileSync(p, 'utf8'));
+    const cmd = [...text.matchAll(/\\[a-zA-Z]{2,}/g)].map((m) => m[0]);
+    const sub = [...text.matchAll(/(?<![A-Za-z0-9_])[A-Za-zα-ωΑ-Ω]\s*_\s*[{%]/g)].map((m) => m[0].replace(/\s/g, ''));
+    if (cmd.length || sub.length) {
+      const samples = [...new Set([...cmd, ...sub])].slice(0, 4).join('、');
+      problems.push(`${plat} 有 ${cmd.length + sub.length} 处裸 TeX（${samples}）`);
+      perFile.push({ plat, n: cmd.length + sub.length });
+    }
+  }
+  check('D4b', problems.length === 0, problems.length
+    ? `正文残留未渲染的公式：${problems.join('；')}——读者看到的是看不懂的符号`
+    : `三平台产物无裸 TeX 残留（${perFile.length ? perFile.map((x) => `${x.plat} ${x.n}`).join('、') : 'zhihu + wechat'}）`);
+}
+
+// D5 知乎产物自检（dist/zhihu/<slug>.html）
+// 这几条对应 2026-11-11 用户实际看到的三个问题，全部是「HTML 生成阶段就能查出来」的：
+//   ① 公式卡要各就各位：独占一段的是**行间**（data-eeimg="2"，居中）；
+//      嵌在段落文字中间的是**行内**（data-eeimg="1"）。
+//      2026-11-17 起 render-zhihu 主动把复杂行内式做成行内卡——之前降级成纯文本，
+//      读者反馈 `τ=sum_rleft(1+sum_jleell_ra_r,jright)` 看不懂。
+//      所以判据不是「eeimg=1 的数量必须为 0」，而是**没有独占段落的行内卡**
+//      （那才是行间公式被误写成行内卡的旧故障，会左对齐并留空段落）。
 //   ② 图注必须在 alt 里（灌稿脚本据此填 figcaption），不能拼成正文段落。
 //   ③ 不能残留【公式N】/【图N】/【表N】占位符——渲染器漏配 TeX 时它们会原样显示。
 {
@@ -479,7 +568,13 @@ check('D3', Object.values(platforms).every((p) => ['todo', 'draft', 'published']
   } else {
     const zh = readFileSync(zhihuPath, 'utf8');
     const mathTags = [...zh.matchAll(/<span class="ztext-math"[^>]*>/g)].map((m) => m[0]);
-    const inlineMath = mathTags.filter((t) => !/data-eeimg="2"/.test(t)).length;
+    const displayMath = mathTags.filter((t) => /data-eeimg="2"/.test(t)).length;
+    const inlineMath = mathTags.length - displayMath;
+    // 独占段落的行内卡 = 本该是行间公式，分类错了。
+    // 判据必须「整段只有这张卡」：`<p>\s*卡[\s\S]*?</p>` 会连带匹配
+    // 「公式开头 + 后面还有正文」的正常行内卡（2026-11-17 误报过一次）。
+    const loneInline = [...zh.matchAll(/<p>([\s\S]*?)<\/p>/g)]
+      .filter((m) => /^\s*<span class="ztext-math" data-eeimg="1"[\s\S]*?<\/span>\s*$/.test(m[1])).length;
     const imgsAll = [...zh.matchAll(/<img\b[^>]*>/g)].map((m) => m[0]);
     const noAlt = imgsAll.filter((t) => !/\balt="[^"]+"/.test(t)).length;
     const leftPlaceholders = (zh.match(/【(图|表|公式)\d+/g) ?? []).length;
@@ -491,13 +586,13 @@ check('D3', Object.values(platforms).every((p) => ['todo', 'draft', 'published']
     const bareUrls = (metaSeg.replace(/<a\b[^>]*>[\s\S]*?<\/a>/g, '').match(/https?:\/\//g) ?? []).length;
     const anchorCount = (metaSeg.match(/<a\b[^>]*href=/g) ?? []).length;
     const problems = [];
-    if (inlineMath) problems.push(`${inlineMath} 个公式是 data-eeimg="1"（行内、左对齐，且会留空段落）`);
+    if (loneInline) problems.push(`${loneInline} 个公式独占一段却是 data-eeimg="1"（行间公式被当行内，会左对齐并留空段落）`);
     if (noAlt) problems.push(`${noAlt} 张图缺 alt（图注不会被填进 figcaption）`);
     if (leftPlaceholders) problems.push(`残留占位符 ${leftPlaceholders} 处`);
     if (bareUrls) problems.push(`元信息块有 ${bareUrls} 个裸 URL 没做成超链接（读者的链接是死的）`);
     check('D5', problems.length === 0, problems.length
       ? `知乎 HTML：${problems.join('；')}`
-      : `知乎 HTML：公式全部行间(${mathTags.length})、图注齐全(${imgsAll.length})、无占位残留、链接 ${anchorCount} 个`);
+      : `知乎 HTML：公式 行间 ${displayMath} + 行内 ${inlineMath}、图注齐全(${imgsAll.length})、无占位残留、链接 ${anchorCount} 个`);
   }
 }
 
@@ -554,9 +649,55 @@ check('D3', Object.values(platforms).every((p) => ['todo', 'draft', 'published']
   }
 }
 
+// D6d 公众号公式图片的字号必须与正文对齐（2026-11-19 用户定下的标准）
+//
+// 公众号正文是 HTML 文本，公式却是图片，宽度按渲染时的 CSS 像素回填——
+// 两者没有任何自动关联，所以「公式看着比正文大」只能靠常量本身守。
+// 改成看产物里的 `width:NNNpx` 不现实：同样是 16px，`C(B,\rho)` 渲染出来 93px、
+// 一个长分式能到 700px，绝对宽度说明不了字号。
+// 判据落在渲染器的常量上：
+//   ① 行内公式字号落在正文的 0.85–1.0 倍。**不能要求相等**：
+//      带括号/上下标的公式天然比 x-height 高，font-size 相等时墨迹反而高出 22%
+//      （实测中文 16px 墨迹 15.00、C(B,ρ) @16px 是 18.25）。要让最高部分
+//      落在中文高度上，字号必须比正文小一档，现取 14/16 = 0.875。
+//      上限 1.0 挡住「又变大」，下限 0.85 挡住「小到看不清」。
+//   ② 行间在行内之上 1–2px（它独占一行，完全同字号反而显得弱）。
+{
+  const renderer = join(ROOT, 'scripts', 'render-wechat.mjs');
+  if (!existsSync(renderer)) {
+    check('D6d', true, '找不到 scripts/render-wechat.mjs（忽略）');
+  } else {
+    const src = readFileSync(renderer, 'utf8');
+    const num = (name) => {
+      const m = src.match(new RegExp(`const ${name}\\s*=\\s*(\\d+)`));
+      return m ? Number(m[1]) : null;
+    };
+    const fs = num('FS');
+    const inline = num('FS_INLINE_FORMULA');
+    const display = num('FS_DISPLAY_FORMULA');
+    const problems = [];
+    if (fs === null || inline === null || display === null) {
+      problems.push('找不到 FS / FS_INLINE_FORMULA / FS_DISPLAY_FORMULA 常量');
+    } else {
+      const ratio = inline / fs;
+      if (ratio < 0.85 || ratio > 1.0) {
+        problems.push(`行内公式 ${inline}px 是正文 ${fs}px 的 ${ratio.toFixed(3)} 倍（应在 0.85–1.0，见 D6d 注释的墨迹依据）`);
+      }
+      const d = display - inline;
+      if (d < 0 || d > 2) problems.push(`行间公式 ${display}px 与行内 ${inline}px 差 ${d}px（应在 0–2px）`);
+    }
+    check('D6d', problems.length === 0, problems.length
+      ? `公众号公式字号：${problems.join('；')}`
+      : `公众号公式字号：正文 ${fs}px / 行内 ${inline}px（${(inline / fs).toFixed(2)}×）/ 行间 ${display}px`);
+  }
+}
+
 // D6b 公众号外链替代：外链只能靠二维码 + 阅读原文，两者缺一读者就拿不到链接。
 // 例外：元信息块里**根本没有外链**时（教程类常这样），不该强制要求二维码——
 // 2026-11-16 用户要求去掉入门篇的来源链接后，这里开始误报。
+//
+// 判据用正文 markdown 的元信息块**和**产物里的二维码张数比对：每条外链都该有一枚码，
+// 少一枚就是读者拿不到的链接。设了 `WECHAT_QR_PATTERN` 时只要求命中的那些。
 {
   const wechatPath = join(ROOT, 'dist', 'wechat', `${slug}.html`);
   if (!existsSync(wechatPath)) {
@@ -564,16 +705,33 @@ check('D3', Object.values(platforms).every((p) => ['todo', 'draft', 'published']
   } else {
     const wc = readFileSync(wechatPath, 'utf8');
     // 二维码用 @@QRn@@ 占位；上传后变成 mmbiz.qpic.cn 地址。两种都算「有」。
-    const qrs = (wc.match(/@@QR\d+@@/g) ?? []).length || (wc.match(/width:68px;height:68px/g) ?? []).length;
-    const head = (body.split(/\n##\s/)[0] ?? '');
-    const hasMetaLink = /https?:\/\//.test(head);
+    // 数**图**不是数占位符：每张图同时写 src 和 data-src，占位符会出现两次，
+    // 直接 match 全局会把 2 张数成 4 张（2026-11-18 实际数错）。
+    const qrs = (wc.match(/<img[^>]+src="@@QR\d+@@"/g) ?? []).length
+      || (wc.match(/<img[^>]+width:68px;height:68px/g) ?? []).length;
+    const qrLabels = [...wc.matchAll(/margin-top:2px;">([^<]*)</g)].map((m) => m[1].trim());
+    // 元信息块里的外链（正文 markdown 的第一段引用块，按 `> **字段**　内容` 逐行读）
+    const metaLinks = [];
+    for (const line of body.split('\n')) {
+      if (!/^>\s*\*\*/.test(line)) continue;
+      for (const m of line.matchAll(/https?:\/\/[^\s)<>\]]+/g)) metaLinks.push(m[0]);
+    }
+    const pattern = (() => {
+      const raw = process.env.WECHAT_QR_PATTERN;
+      if (!raw) return null;
+      try { return new RegExp(raw); } catch { return null; }
+    })();
+    const want = pattern ? metaLinks.filter((u) => pattern.test(u)) : metaLinks;
     const problems = [];
-    if (!qrs && hasMetaLink) problems.push('元信息块有外链但没有二维码（读者在公众号里拿不到 arXiv / 代码 / 架构图链接）');
+    if (want.length > qrs) {
+      problems.push(`元信息块有 ${want.length} 条外链但只有 ${qrs} 枚二维码，读者点不到的那几条只能靠复制 URL`);
+    }
+    if (qrLabels.some((l) => !l)) problems.push('有二维码没有标签，读者不知道它通向哪');
     check('D6b', problems.length === 0, problems.length
       ? `公众号外链替代：${problems.join('；')}`
       : (qrs
-        ? `公众号外链替代：${qrs} 枚二维码${meta.wechat_draft_id ? '，阅读原文指向个人站' : '（阅读原文在建草稿时写入）'}`
-        : '公众号外链替代：元信息块无外链，跳过（阅读原文仍指向个人站）'));
+        ? `公众号外链替代：${qrs} 枚二维码（${[...new Set(qrLabels)].join(' / ')}）${meta.wechat_draft_id ? '，阅读原文指向个人站' : '（阅读原文在建草稿时写入）'}`
+        : '公众号外链替代：元信息块没有外链，跳过（阅读原文仍指向个人站）'));
   }
 }
 

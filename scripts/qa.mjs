@@ -122,10 +122,23 @@ const body = md.replace(/^---\n[\s\S]*?\n---\n/, '');
 
 // 问答节本身不能作为出题素材（重跑时会把自己的旧答案喂回去，越抄越远）
 const articleBody = body.split(new RegExp(`^##\\s+${QA_HEADING}\\s*$`, 'm'))[0].trim();
-const stripMarkdown = (t) => t.replace(/^!\[[^\]]*\]\([^)]*\)$/gm, ' ')
-  .replace(/^\|.*$/gm, ' ')
-  .replace(/\$\$[^$]*\$\$/g, ' ')
-  .replace(/[*_`>]/g, ' ');
+// 公式要**原样**留给模型看，不能被下面的去 Markdown 洗掉。
+// 2026-11-18 事故：`$q_j$` 里的下划线被当成强调标记换成空格，模型看到的是
+// `$q j$`，于是它在答案里把公式写成裸文本 `q_j`、`α̃_i`、`∏α_j`——站点上
+// 这些就是普通字符，不排公式；而且 `_` 在 Markdown 里还有歧义。
+// 这里先把 `$…$` / `$$…$$` 换成占位符，洗完再放回去。
+const stripMarkdown = (t) => {
+  const math = [];
+  const kept = t.replace(/\$\$[\s\S]*?\$\$|\$[^$\n]+?\$/g, (m) => {
+    math.push(m);
+    return `\u0000${math.length - 1}\u0000`;
+  });
+  return kept
+    .replace(/^!\[[^\]]*\]\([^)]*\)$/gm, ' ')
+    .replace(/^\|.*$/gm, ' ')
+    .replace(/[*_`>]/g, ' ')
+    .replace(/\u0000(\d+)\u0000/g, (_m, i) => math[Number(i)]);
+};
 
 const factsPath = join(dir, 'facts.json');
 const facts = existsSync(factsPath) ? JSON.parse(readFileSync(factsPath, 'utf8')).facts ?? [] : [];
@@ -231,6 +244,9 @@ ${TIERS.map((t, i) => `${i + 1}. 「${t.name}」——${t.hint}`).join('\n')}
 - 答案要能从正文推出来。**不许引入正文里没有的数字、模型名、结论**（外部材料里的例外，但要标来源）。
 - 不要复述正文原段。换个说法，补上「所以呢」——读者读完这条要有新收获。
 - 中文引号用「」，不要用 ASCII 引号。不要出现「值得注意的是」「不是A而是B」「综上」。
+- **公式一律用 $…$ 包起来**，和正文完全一样：$q_j$、$\alpha_i$、$\prod \alpha_j$、$\rho_t$、$\Sigma_k \nabla_\theta W_k$。
+  不要写成裸文本 \`q_j\`、\`α_j\`、\`∏α_j\`——那样在网页上不会被排版成公式，只会显示成一串带下划线的字符。
+  单字母下标也要包：写 $p_i$ 不写 p_i。公式里的数学符号用 LaTeX：$\alpha$ $\gamma$ $\rho$ $\prod$ $\nabla$ $\leq$ $\approx$ $\sigma$。
 
 ${QUESTION_RULES}
 ${supplementaryBlock}
@@ -419,6 +435,26 @@ const isGeneric = (q) => GENERIC_Q.some((re) => re.test(q.replace(/[？?。！!\
  * 在中文上会误判（2026-11-13 eagle 首跑 12 条里 2 条假失败），
  * 而它拦住的价值远不如让流程顺跑。真正防「只会复述」的是泛题黑名单。
  */
+/**
+ * 抽出「没被 `$…$` 包住、但长得像公式」的片段。
+ *
+ * 判据要窄：中文正文里本来就有一堆 `snake_case` 式的英文词（`no_grad`、
+ * `log-prob`）和量名（`block size`），全拦会把正常答案判成违规。所以只认
+ * **带下标/上标的字母串**（`q_j`、`W_{k-1}`、`D_{1:K}`）、**希腊字母加下标**
+ * （`α̃_i`、`ρ_t`）、以及**数学运算符**（`∏ Σ ∇ ∂ ≈ ≤ ≥ ∝`）。
+ * 反引号里的（行内代码）不算——那是读者要看见字面量的地方。
+ */
+function bareMath(text) {
+  const s = String(text ?? '')
+    .replace(/`[^`\n]*`/g, ' ')          // 行内代码留给字面量
+    .replace(/\$\$[\s\S]*?\$\$/g, ' ')
+    .replace(/\$[^$\n]+?\$/g, ' ');
+  const out = [];
+  for (const m of s.matchAll(/[A-Za-zα-ωΑ-Ω̃][α-ωΑ-Ω̃]*(?:_\{[^}]{1,12}\}|_[0-9A-Za-z]|\^\{[^}]{1,12}\}|\^[0-9A-Za-z])+/g)) out.push(m[0]);
+  for (const m of s.matchAll(/[∏Σ∇∂≈≤≥∝]/g)) out.push(m[0]);
+  return out;
+}
+
 function violationsOf(item) {
   const blocking = [];
   const warnings = [];
@@ -428,6 +464,12 @@ function violationsOf(item) {
   if (chars < 60) blocking.push(`答案只有 ${chars} 字（太短，等于没答）`);
   if (chars > 400) blocking.push(`答案 ${chars} 字（太长，读者在文末不会再读这么长）`);
   if (/[""]/.test(item.a)) blocking.push('答案里有 ASCII 双引号，改成「」');
+  // 裸公式（q_j、α̃_i、∏α_j、ρ_t…）：网页上不会排成公式，只会显示成带下划线的文本。
+  // 2026-11-18 用户指出「文稿里还有挺多公式的格式不对」，十篇的问答节全中——
+  // 根因是 stripMarkdown 把 `$q_j$` 洗成了 `$q j$`，模型没得抄就自由发挥了。
+  // 提示词已经补了规则，这里再机械拦一道，防止模型换个写法复发。
+  const bare = bareMath(item.a) ?? bareMath(item.q);
+  if (bare.length) blocking.push(`公式没用 $…$ 包起来：${[...new Set(bare)].slice(0, 6).join('、')}`);
   // 人给的题即便泛，也不阻断——那是作者的判断，脚本没有资格替他改题。
   if (isGeneric(item.q) && !args.questions) blocking.push(`问题「${item.q}」是泛题，用目录就能答，要锚定到具体机制或默认值`);
 

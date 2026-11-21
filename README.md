@@ -56,7 +56,7 @@ ingest → research → structure → write → polish → review → render →
 | Structure | `npm run facts` `glossary` `outline` | Number table, glossary, section outline |
 | Write | `npm run pipeline` | `article.md` (8 sections, concurrent) |
 | Polish | `npm run polish` | Rewrites prose; facts, tables and formulas are byte-checked |
-| Review | `npm run critic` `verify:numbers` `publish:check` | Claim-level audit, 34 structural checks |
+| Review | `npm run critic` `verify:numbers` `publish:check` | Claim-level audit, 35 structural checks |
 | Render | `npm run finalize` | `dist/{html,zhihu,wechat,xhs}` |
 | Publish | `npm run publish:platform` | Handed to a publish driver |
 
@@ -112,7 +112,7 @@ npm run publish:platform -- --slug=mypaper --to=wechat
 
 [`examples/minimal/`](examples/minimal/) contains a complete article directory for a
 fictional paper: metadata, writing brief, fact table, outline, the article itself, the
-critic report and the rendered figures. It passes all 34 machine checks and renders to
+critic report and the rendered figures. It passes all 35 machine checks and renders to
 both Zhihu HTML and a self-contained page.
 
 ```bash

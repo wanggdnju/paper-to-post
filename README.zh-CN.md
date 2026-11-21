@@ -68,7 +68,7 @@
 | 结构化 | `npm run facts` `glossary` `outline` | 数字对照表、术语表、大纲 |
 | 写稿 | `npm run pipeline` | `article.md`（8 节，并发生成） |
 | 润色 | `npm run polish` | 只改表达；事实/表格/公式逐字校验 |
-| 质检 | `npm run critic` `verify:numbers` `publish:check` | 断言级审计 + 34 项结构检查 |
+| 质检 | `npm run critic` `verify:numbers` `publish:check` | 断言级审计 + 35 项结构检查 |
 | 渲染 | `npm run finalize` | `dist/{html,zhihu,wechat,xhs}` |
 | 发布 | `npm run publish:platform` | 交给发布驱动 |
 
@@ -109,7 +109,7 @@ npm run publish:platform -- --slug=mypaper --to=wechat
 [`examples/minimal/`](examples/minimal/) 是一篇**虚构论文**的完整文章目录：
 元数据、写作简报、事实表、大纲、正文、critic 报告、小红书文案、两张示意图。
 
-它通过全部 34 项机器检查，能渲染出知乎 HTML 与自包含长文。可以直接当文件结构参考，也可以当改流水线时的回归夹具：
+它通过全部 35 项机器检查，能渲染出知乎 HTML 与自包含长文。可以直接当文件结构参考，也可以当改流水线时的回归夹具：
 
 ```bash
 cp -r examples/minimal articles/minimal
